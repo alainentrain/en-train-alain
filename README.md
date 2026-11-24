@@ -1,34 +1,12 @@
-# En Train Alain — V3.1
+# En Train Alain — V4
 
-Prototype de moteur de découverte de destinations en train.
+Prototype du moteur de découverte ferroviaire.
 
-## Nouveautés V3.1
+V4 remplace les simples étiquettes par des **profils de destination à scores progressifs** :
+une ville peut être à la fois très gastronomique, culturelle, nature, etc.
 
-La sélection de vibe est maintenant réellement utilisée dans le classement.
+Les prix restent fictifs/indicatifs. La variation mensuelle est une simulation et ne représente pas un prix commercial réel.
 
-Chaque destination possède plusieurs scores indépendants :
-
-- Week-end
-- Culture
-- Nature
-- Soleil
-- Gastronomie
-
-Le moteur combine ensuite :
-
-- compatibilité avec le budget A/R ;
-- durée aller/retour ;
-- adéquation à la vibe ;
-- potentiel week-end.
-
-## Important
-
-Les prix sont toujours des **tarifs indicatifs de démonstration**.
-Ils ne correspondent pas à une disponibilité commerciale en temps réel.
-
-La prochaine étape est de remplacer les données de démonstration par :
-
-1. données ouvertes pour réseau / gares / horaires ;
-2. données tarifaires disponibles ;
-3. API commerciale pour prix et disponibilité en temps réel ;
-4. redirection vers la réservation.
+Prochaines étapes :
+- V5 : données SNCF/Open Data pour réseau et trajets réels.
+- V6 : API commerciale pour prix et disponibilités en temps réel.
