@@ -1,8 +1,8 @@
 import streamlit as st
 from datetime import date, timedelta
 
-from data_sources import get_live_sncF_fares
-from engine import find_destinations
+from engine import search_destinations
+from data_sources import DEMO_ROUTES
 
 st.set_page_config(
     page_title="En Train Alain",
@@ -13,102 +13,108 @@ st.set_page_config(
 
 st.markdown("""
 <style>
-.block-container {max-width: 760px; padding-top: 1.2rem; padding-bottom: 3rem;}
+.block-container { max-width: 760px; padding-top: 1.5rem; }
+h1 { margin-bottom: .2rem; }
 .eta-card {
-    border: 1px solid #e7e7e7; border-radius: 18px; padding: 18px;
-    margin: 12px 0; background: white;
+    border: 1px solid #e5e7eb; border-radius: 16px;
+    padding: 18px; margin: 12px 0; background: white;
 }
-.score {font-size: 1.45rem; font-weight: 800;}
-.destination {font-size: 1.25rem; font-weight: 800;}
-.muted {color: #666;}
-.price {font-size: 1.1rem; font-weight: 700;}
+.score { float:right; font-size: 1.15rem; font-weight: 700; }
+.price { font-size: 1.2rem; font-weight: 700; margin-top: 8px; }
+.meta { color:#666; font-size:.92rem; }
+.note { color:#777; font-size:.78rem; }
 </style>
 """, unsafe_allow_html=True)
 
 st.title("🚂 En Train Alain")
 st.subheader("Tu as un budget. On trouve où partir.")
-st.caption("V2 — tarifs SNCF open data + moteur de découverte")
+st.caption("Prototype V3 — moteur de découverte avec aller + retour")
 
-with st.container():
+with st.form("search"):
     departure = st.text_input("📍 Départ", value="Paris")
-    budget = st.slider("💶 Budget maximum", 10, 200, 50, 5)
-    trip_date = st.date_input(
-        "📅 Date de départ",
-        value=date.today() + timedelta(days=7),
-        min_value=date.today(),
-    )
-    max_duration = st.slider("⏱️ Durée maximale du trajet", 1.0, 8.0, 3.0, 0.5)
+
+    c1, c2 = st.columns(2)
+    with c1:
+        departure_date = st.date_input(
+            "📅 Aller",
+            value=date.today() + timedelta(days=14),
+            min_value=date.today()
+        )
+    with c2:
+        return_date = st.date_input(
+            "↩️ Retour",
+            value=date.today() + timedelta(days=16),
+            min_value=date.today()
+        )
+
+    c3, c4 = st.columns(2)
+    with c3:
+        budget = st.number_input(
+            "💶 Budget maximum A/R",
+            min_value=5, max_value=500, value=40, step=5
+        )
+    with c4:
+        max_duration = st.slider(
+            "⏱️ Durée max par trajet",
+            min_value=1.0, max_value=6.0, value=3.0, step=0.5
+        )
+
     vibe = st.selectbox(
         "✨ Envie",
-        ["Peu importe", "Culture", "Mer", "Nature", "Soleil", "Week-end"],
+        ["Peu importe", "Week-end", "Culture", "Nature", "Soleil", "Gastronomie"]
     )
 
-search = st.button("🔎 Trouve-moi une destination", use_container_width=True, type="primary")
+    submitted = st.form_submit_button(
+        "🔎 Trouve-moi une destination",
+        use_container_width=True
+    )
 
-if search:
-    with st.spinner("Je cherche les destinations compatibles…"):
-        fares, source_status = get_live_sncF_fares(departure)
+if submitted:
+    if return_date < departure_date:
+        st.error("La date de retour doit être après la date de départ.")
+        st.stop()
 
-    if source_status == "live":
-        results = find_destinations(
-            fares=fares,
-            departure=departure,
-            budget=budget,
-            trip_date=trip_date,
-            max_duration=max_duration,
-            vibe=vibe,
-        )
-        st.success("Tarifs issus du jeu de données officiel SNCF Open Data.")
-    else:
-        results = find_destinations(
-            fares=fares,
-            departure=departure,
-            budget=budget,
-            trip_date=trip_date,
-            max_duration=max_duration,
-            vibe=vibe,
-        )
-        st.warning(
-            "La source SNCF n'est pas accessible pour le moment. "
-            "Le prototype utilise les données de secours intégrées au projet."
-        )
+    results = search_destinations(
+        departure=departure,
+        departure_date=departure_date,
+        return_date=return_date,
+        budget=float(budget),
+        max_duration=float(max_duration),
+        vibe=vibe,
+        routes=DEMO_ROUTES,
+    )
 
     st.divider()
+    st.markdown(
+        f"### Tes meilleures options"
+    )
+    st.caption(
+        f"{departure} → aller {departure_date.strftime('%d/%m/%Y')} · "
+        f"retour {return_date.strftime('%d/%m/%Y')} · "
+        f"budget A/R ≤ {budget:.0f} € · ≤ {max_duration:g} h par trajet"
+    )
 
     if not results:
-        st.info(
-            "Aucune destination ne correspond aux critères. "
-            "Essaie d'augmenter le budget ou la durée maximale."
+        st.warning(
+            "Aucune destination ne rentre dans ces critères avec les données de démonstration. "
+            "Essaie d'augmenter le budget ou la durée."
         )
     else:
-        st.subheader("Tes meilleures options")
-        for r in results[:10]:
+        for r in results:
             st.markdown(f"""
-            <div class="eta-card">
-                <div style="display:flex;justify-content:space-between;gap:15px;">
-                    <div>
-                        <div class="destination">{r['destination']}</div>
-                        <div class="muted">{departure} → {r['destination']} · {r['transporteur']}</div>
-                    </div>
-                    <div class="score">{r['score']}/100</div>
-                </div>
-                <div style="margin-top:10px;">
-                    <span class="price">≈ {r['prix_min']} €</span>
-                    · {r['description']}
-                </div>
-                <div class="muted" style="margin-top:7px;">
-                    Tarif indicatif · {r['date']}
-                </div>
-            </div>
-            """, unsafe_allow_html=True)
+<div class="eta-card">
+<div class="score">{r['score']}/100</div>
+<h3 style="margin-bottom:4px">{r['destination']}</h3>
+<div class="meta">{r['outbound_operator']} · aller ≈ {r['outbound_duration']:.1f} h</div>
+<div class="meta">retour ≈ {r['return_duration']:.1f} h</div>
+<div class="price">≈ {r['roundtrip_reference_price']:.0f} € A/R</div>
+<div class="meta">{r['reason']}</div>
+<div class="note">Tarif indicatif issu des données du prototype — ce n'est pas une disponibilité commerciale en temps réel.</div>
+</div>
+""", unsafe_allow_html=True)
 
-        st.caption(
-            "Important : ce prix est un tarif indicatif issu de l'open data SNCF. "
-            "Il ne garantit ni le prix disponible à cette date, ni la disponibilité du train. "
-            "La prochaine étape est la vérification commerciale en temps réel."
-        )
-else:
-    st.info(
-        "Exemple : « J'ai 40 €, je pars de Paris ce week-end ». "
-        "Lance une recherche pour voir le moteur fonctionner."
-    )
+st.divider()
+st.caption(
+    "V3 : le budget porte sur l'aller-retour et la recherche possède désormais une vraie date d'aller et une vraie date de retour. "
+    "Les tarifs affichés ici restent indicatifs tant que l'API commerciale n'est pas branchée."
+)
