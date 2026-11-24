@@ -1,0 +1,17 @@
+origin,destination,region,duration,price,direct
+Paris,Lille,Hauts-de-France,1.05,29,direct
+Paris,Reims,Grand Est,0.75,25,direct
+Paris,Rouen,Normandie,1.45,22,direct
+Paris,Dijon,Bourgogne,1.40,35,direct
+Paris,Strasbourg,Grand Est,1.85,39,direct
+Paris,Nantes,Pays de la Loire,2.15,49,direct
+Paris,Rennes,Bretagne,1.55,39,direct
+Paris,Bordeaux,Nouvelle-Aquitaine,2.10,49,direct
+Paris,Lyon,Auvergne-Rhône-Alpes,2.05,45,direct
+Paris,Marseille,Provence-Alpes-Côte d'Azur,3.20,55,direct
+Paris,Montpellier,Occitanie,3.25,49,direct
+Paris,Avignon,Provence-Alpes-Côte d'Azur,2.75,45,direct
+Paris,Annecy,Auvergne-Rhône-Alpes,4.05,55,direct
+Paris,La Rochelle,Nouvelle-Aquitaine,2.55,45,direct
+Paris,Bruxelles,Belgique,1.45,39,direct
+Paris,Londres,Royaume-Uni,2.25,59,direct
