@@ -1,12 +1,20 @@
-# En Train Alain — V4
+# En Train Alain — V5
 
-Prototype du moteur de découverte ferroviaire.
+Prototype utilisant le GTFS SNCF fourni par l'utilisateur.
 
-V4 remplace les simples étiquettes par des **profils de destination à scores progressifs** :
-une ville peut être à la fois très gastronomique, culturelle, nature, etc.
+## Ce que fait V5
+- gares SNCF réelles
+- services actifs selon la date
+- trajets ferroviaires réels
+- horaires aller et retour
+- durée réelle
+- recherche de destinations accessibles directement
+- tarif de référence quand une correspondance avec le dataset tarifaire SNCF est possible
 
-Les prix restent fictifs/indicatifs. La variation mensuelle est une simulation et ne représente pas un prix commercial réel.
+Les prix ne sont pas temps réel. Le booking/commercial API viendra ensuite.
 
-Prochaines étapes :
-- V5 : données SNCF/Open Data pour réseau et trajets réels.
-- V6 : API commerciale pour prix et disponibilités en temps réel.
+## Lancer
+```bash
+pip install -r requirements.txt
+streamlit run app.py
+```
