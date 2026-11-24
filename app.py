@@ -232,21 +232,24 @@ def one_connection_journeys(trips, services, origin_ids,
     # Merge on transfer station; this is the key connection.
     merged = first[
         ["trip_id", "origin_station_id", "dep_min", "origin_departure_time",
-         "station_id", "station_name", "transfer_arr", "first_duration"]
+         "station_id", "station_name", "stop_sequence", "transfer_arr", "first_duration"]
     ].rename(columns={
         "trip_id": "first_trip_id",
         "station_id": "transfer_station_id",
         "station_name": "transfer_station_name",
+        "stop_sequence": "transfer_seq",
     })
 
+    # Keep the transfer station name from the first leg. Renaming the second
+    # leg's station_name to the same column would create _x/_y suffixes.
     merged = merged.merge(
         second.rename(columns={
             "trip_id": "second_trip_id",
             "station_id": "transfer_station_id",
-            "station_name": "transfer_station_name",
         }),
         on="transfer_station_id",
         how="inner",
+        suffixes=("", "_second"),
     )
     merged = merged[merged["second_trip_id"] != merged["first_trip_id"]]
     merged["wait"] = merged["second_dep"] - merged["transfer_arr"]
@@ -272,16 +275,21 @@ def one_connection_journeys(trips, services, origin_ids,
         merged[[
             "second_trip_id", "first_trip_id", "origin_station_id",
             "dep_min", "origin_departure_time", "transfer_station_id",
-            "transfer_station_name", "transfer_arr", "second_dep",
+            "transfer_station_name", "transfer_seq", "transfer_arr", "second_dep",
             "wait", "first_duration"
         ]],
         left_on="trip_id",
         right_on="second_trip_id",
         how="inner",
     )
+    if "transfer_station_name" not in downstream.columns:
+        candidates = [c for c in ("transfer_station_name_x", "transfer_station_name_y") if c in downstream.columns]
+        downstream["transfer_station_name"] = downstream[candidates[0]] if candidates else "Correspondance"
+
     downstream["arr_min"] = downstream["arrival_time"].map(parse_gtfs_time)
     downstream = downstream[
         downstream["arr_min"].notna()
+        & (downstream["stop_sequence"] > downstream["transfer_seq"])
         & (downstream["station_id"] != downstream["origin_station_id"])
         & (downstream["station_id"] != downstream["transfer_station_id"])
     ].copy()
@@ -346,7 +354,7 @@ if not fares.empty:
     fares["_d"] = fares["Gare destination"].map(norm)
 
 st.title("🚆 En Train Alain")
-st.caption("Tu as un budget, on cherche où partir. — V7 : directs + 1 correspondance")
+st.caption("Tu as un budget, on cherche où partir. — V8.2 : directs + 1 correspondance")
 
 with st.sidebar:
     st.header("Ton escapade")
@@ -585,7 +593,7 @@ if search:
         )
         st.caption(
             f"Services actifs : {len(out_services)} à l'aller · "
-            f"{len(in_services)} au retour · V7"
+            f"{len(in_services)} au retour · V8.2"
         )
 
         for _, r in results.iterrows():
