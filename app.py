@@ -1,3 +1,4 @@
+
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -8,9 +9,6 @@ import unicodedata
 
 st.set_page_config(page_title="En Train Alain", page_icon="🚆", layout="wide")
 DATA = Path(__file__).parent / "data"
-
-MAX_OPTIONS = 4
-MAX_ALTERNATIVES = 3
 
 @st.cache_data(show_spinner="Chargement des données SNCF…")
 def load_data():
@@ -30,14 +28,9 @@ def load_data():
     trips["trip_id"] = trips["trip_id"].astype(str)
     trips["station_id"] = trips["station_id"].astype(str)
     trips["route_type"] = pd.to_numeric(trips["route_type"], errors="coerce").fillna(0).astype(int)
-    trips["dep_min"] = trips["departure_time"].map(parse_gtfs_time)
-    trips["arr_min"] = trips["arrival_time"].map(parse_gtfs_time)
     return stations, routes, cal, trips
 
 @st.cache_data
-def load_destinations():
-    return pd.read_csv(DATA / "destinations.csv")
-
 def load_fares():
     p = DATA / "tarifs-tgv-inoui-ouigo.csv"
     if not p.exists():
@@ -90,29 +83,14 @@ def station_ids_for_choice(choice, stations):
             stations.loc[
                 stations["station_name"].str.contains(r"^Paris\b", case=False, na=False),
                 "station_id",
-            ].astype(str)
+            ]
         )
-    return set(stations.loc[stations["station_name"] == choice, "station_id"].astype(str))
-
-def build_destination_map(stations, destinations):
-    s = stations.copy()
-    s["_norm"] = s["station_name"].map(norm)
-    mapping = {}
-    station_to_destination = {}
-    for _, d in destinations.iterrows():
-        target = norm(d["match"])
-        mask = (s["_norm"] == target) | s["_norm"].str.startswith(target + " ")
-        ids = set(s.loc[mask, "station_id"].astype(str))
-        if ids:
-            mapping[d["destination"]] = {"station_ids": ids, "row": d}
-            for sid in ids:
-                station_to_destination[sid] = d["destination"]
-    return mapping, station_to_destination
+    return set(stations.loc[stations["station_name"] == choice, "station_id"])
 
 def rail_rows(trips, services):
     return trips[
         trips["service_id"].isin(services) & (trips["route_type"] == 2)
-    ]
+    ].copy()
 
 def direct_journeys(trips, services, origin_ids, destination_ids=None,
                     dep_start=300, dep_end=1380, max_duration=600):
@@ -121,14 +99,16 @@ def direct_journeys(trips, services, origin_ids, destination_ids=None,
     if base.empty:
         return pd.DataFrame()
 
-    base = base[base["dep_min"].between(dep_start, dep_end)].dropna(subset=["dep_min"])
+    base["dep_min"] = base["departure_time"].map(parse_gtfs_time)
+    base = base[base["dep_min"].between(dep_start, dep_end)]
+    base = base.dropna(subset=["dep_min"])
     if base.empty:
         return pd.DataFrame()
 
     ids = base["trip_id"].unique()
     full = trips[trips["trip_id"].isin(ids)][
         ["trip_id", "station_id", "station_name", "stop_sequence",
-         "arrival_time", "arr_min", "trip_headsign"]
+         "arrival_time", "trip_headsign"]
     ].copy()
 
     origins = base[
@@ -139,7 +119,13 @@ def direct_journeys(trips, services, origin_ids, destination_ids=None,
         "station_id": "origin_station_id",
     })
 
-    full = full.merge(origins, on="trip_id", how="inner")
+    full = full.merge(
+        origins,
+        on="trip_id",
+        how="inner",
+        suffixes=("", "_origin"),
+    )
+    full["arr_min"] = full["arrival_time"].map(parse_gtfs_time)
     full = full[
         (full["stop_sequence"] > full["origin_seq"])
         & full["station_id"].notna()
@@ -147,19 +133,182 @@ def direct_journeys(trips, services, origin_ids, destination_ids=None,
     ]
     if destination_ids is not None:
         full = full[full["station_id"].isin(destination_ids)]
-    if full.empty:
-        return pd.DataFrame()
 
     full["duration"] = full["arr_min"] - full["dep_min"]
-    full = full[(full["duration"] >= 0) & (full["duration"] <= max_duration)]
-    full = full.sort_values(["trip_id", "station_id", "arr_min"]).drop_duplicates(
-        ["trip_id", "station_id"]
+    full = full[
+        (full["duration"] >= 0) & (full["duration"] <= max_duration)
+    ]
+    full = (
+        full.sort_values(["trip_id", "station_id", "arr_min"])
+        .drop_duplicates(["trip_id", "station_id"])
     )
     return full.rename(columns={"origin_departure_time": "departure_time"})[
         ["trip_id", "station_id", "station_name", "departure_time",
          "arrival_time", "dep_min", "arr_min", "origin_station_id",
          "trip_headsign", "duration"]
     ]
+
+def one_connection_journeys(trips, services, origin_ids,
+                            dep_start=300, dep_end=1380,
+                            max_duration=600, min_transfer=5,
+                            max_transfer=90, max_results_per_destination=3):
+    """
+    Build O -> X -> D journeys from two real GTFS trips.
+    The first leg starts at the chosen origin. The second leg starts
+    at the first leg's downstream stop. We keep sensible transfer times
+    and a total journey duration <= max_duration.
+    """
+    rail = rail_rows(trips, services)
+    if rail.empty:
+        return pd.DataFrame()
+
+    origin = rail[rail["station_id"].isin(origin_ids)].copy()
+    origin["dep_min"] = origin["departure_time"].map(parse_gtfs_time)
+    origin = origin[
+        origin["dep_min"].between(dep_start, dep_end)
+        & origin["dep_min"].notna()
+    ]
+    if origin.empty:
+        return pd.DataFrame()
+
+    # First-leg candidates: every downstream stop that can serve as a transfer.
+    first_ids = origin["trip_id"].unique()
+    first = trips[trips["trip_id"].isin(first_ids)][
+        ["trip_id", "station_id", "station_name", "stop_sequence",
+         "arrival_time", "trip_headsign"]
+    ].copy()
+    first = first.merge(
+        origin[["trip_id", "stop_sequence", "dep_min", "departure_time",
+                "station_id"]].rename(columns={
+                    "stop_sequence": "origin_seq",
+                    "station_id": "origin_station_id",
+                    "departure_time": "origin_departure_time",
+                }),
+        on="trip_id",
+        how="inner",
+    )
+    first["transfer_arr"] = first["arrival_time"].map(parse_gtfs_time)
+    first = first[
+        (first["stop_sequence"] > first["origin_seq"])
+        & first["transfer_arr"].notna()
+    ].copy()
+    first["first_duration"] = first["transfer_arr"] - first["dep_min"]
+    first = first[
+        (first["first_duration"] > 0)
+        & (first["first_duration"] < max_duration)
+    ]
+
+    if first.empty:
+        return pd.DataFrame()
+
+    # Second-leg departures from transfer stations. Limit the working set
+    # to a reasonable time window after each transfer to avoid a huge join.
+    second = rail[
+        ["trip_id", "station_id", "station_name", "stop_sequence",
+         "departure_time", "trip_headsign"]
+    ].copy()
+    second["second_dep"] = second["departure_time"].map(parse_gtfs_time)
+    second = second[second["second_dep"].notna()].copy()
+
+    # Only use second trips that are not the same physical trip.
+    # Merge on transfer station; this is the key connection.
+    merged = first[
+        ["trip_id", "origin_station_id", "dep_min", "origin_departure_time",
+         "station_id", "station_name", "transfer_arr", "first_duration"]
+    ].rename(columns={
+        "trip_id": "first_trip_id",
+        "station_id": "transfer_station_id",
+        "station_name": "transfer_station_name",
+    })
+
+    merged = merged.merge(
+        second.rename(columns={
+            "trip_id": "second_trip_id",
+            "station_id": "transfer_station_id",
+            "station_name": "transfer_station_name",
+        }),
+        on="transfer_station_id",
+        how="inner",
+    )
+    merged = merged[merged["second_trip_id"] != merged["first_trip_id"]]
+    merged["wait"] = merged["second_dep"] - merged["transfer_arr"]
+    merged = merged[
+        merged["wait"].between(min_transfer, max_transfer)
+    ]
+    merged["remaining"] = max_duration - (
+        merged["first_duration"] + merged["wait"]
+    )
+    merged = merged[merged["remaining"] > 0]
+
+    if merged.empty:
+        return pd.DataFrame()
+
+    # Find destinations downstream of each selected second trip.
+    second_ids = merged["second_trip_id"].unique()
+    downstream = trips[trips["trip_id"].isin(second_ids)][
+        ["trip_id", "station_id", "station_name", "stop_sequence",
+         "arrival_time", "trip_headsign"]
+    ].copy()
+
+    downstream = downstream.merge(
+        merged[[
+            "second_trip_id", "first_trip_id", "origin_station_id",
+            "dep_min", "origin_departure_time", "transfer_station_id",
+            "transfer_station_name", "transfer_arr", "second_dep",
+            "wait", "first_duration"
+        ]],
+        left_on="trip_id",
+        right_on="second_trip_id",
+        how="inner",
+    )
+    downstream["arr_min"] = downstream["arrival_time"].map(parse_gtfs_time)
+    downstream = downstream[
+        downstream["arr_min"].notna()
+        & (downstream["station_id"] != downstream["origin_station_id"])
+        & (downstream["station_id"] != downstream["transfer_station_id"])
+    ].copy()
+    downstream["total_duration"] = downstream["arr_min"] - downstream["dep_min"]
+    downstream = downstream[
+        (downstream["total_duration"] > 0)
+        & (downstream["total_duration"] <= max_duration)
+    ]
+
+    if downstream.empty:
+        return pd.DataFrame()
+
+    downstream["transfer_text"] = (
+        downstream["transfer_station_name"].fillna("correspondance")
+        + " · " + downstream["wait"].round().astype(int).astype(str) + " min"
+    )
+
+    # Keep the quickest connection(s) for each destination.
+    downstream = downstream.sort_values(
+        ["station_id", "total_duration", "dep_min"]
+    ).drop_duplicates(
+        ["station_id", "first_trip_id", "second_trip_id"]
+    )
+
+    out = downstream[
+        ["first_trip_id", "second_trip_id", "station_id", "station_name",
+         "origin_departure_time", "dep_min", "arrival_time", "arr_min",
+         "total_duration", "transfer_station_name", "wait", "transfer_text",
+         "trip_headsign"]
+    ].copy()
+
+    out = (
+        out.sort_values(["station_id", "total_duration", "dep_min"])
+        .groupby("station_id", group_keys=False)
+        .head(max_results_per_destination)
+    )
+
+    return out
+
+def return_options_direct(trips, services, destination_id, origin_ids,
+                          dep_start=600, dep_end=1500, max_duration=600):
+    return direct_journeys(
+        trips, services, {destination_id}, origin_ids,
+        dep_start=dep_start, dep_end=dep_end, max_duration=max_duration
+    )
 
 def fare_lookup(fares, origin_name, dest_name):
     if fares.empty:
@@ -172,71 +321,14 @@ def fare_lookup(fares, origin_name, dest_name):
         return np.nan
     return pd.to_numeric(f["Prix minimum"], errors="coerce").min()
 
-def pick_options(df, n=MAX_OPTIONS):
-    if df.empty:
-        return df
-    # Keep a spread of departures rather than four almost-identical trains.
-    x = df.sort_values(["dep_min", "duration", "arr_min"]).copy()
-    picked = []
-    for _, row in x.iterrows():
-        if all(abs(float(row["dep_min"]) - float(p["dep_min"])) >= 45 for p in picked):
-            picked.append(row)
-        if len(picked) >= n:
-            break
-    if len(picked) < n:
-        seen = {str(p["trip_id"]) for p in picked}
-        for _, row in x.iterrows():
-            if str(row["trip_id"]) not in seen:
-                picked.append(row)
-                seen.add(str(row["trip_id"]))
-            if len(picked) >= n:
-                break
-    return pd.DataFrame(picked)
-
-def stay_minutes(out_dep, out_arr, ret_dep, same_day):
-    if same_day:
-        return ret_dep - out_arr
-    return (24 * 60 - out_arr) + ret_dep
-
-def score_pair(out_row, ret_row, fare_ar, budget, max_duration, vibe_score, same_day):
-    stay = stay_minutes(out_row["dep_min"], out_row["arr_min"], ret_row["dep_min"], same_day)
-    if stay <= 0:
-        return -1
-    total_travel = float(out_row["duration"]) + float(ret_row["duration"])
-    time_score = np.clip(1 - total_travel / (max_duration * 2), 0, 1)
-    # A pleasant departure window, without making 6am trains impossible.
-    schedule_score = np.clip(1 - abs(float(out_row["dep_min"]) - 510) / 600, 0, 1)
-    stay_target = 8 * 60 if same_day else 24 * 60
-    stay_score = np.clip(stay / stay_target, 0, 1)
-    budget_score = 0.5 if pd.isna(fare_ar) else np.clip(1 - fare_ar / budget, 0, 1)
-    return (0.38 * vibe_score + 0.27 * budget_score + 0.18 * time_score
-            + 0.10 * schedule_score + 0.07 * stay_score) * 100
-
-def find_best_pairs(out_options, return_options, fare_ar, budget, max_duration,
-                    vibe_score, same_day):
-    pairs = []
-    for _, o in out_options.iterrows():
-        for _, r in return_options.iterrows():
-            if same_day and float(r["dep_min"]) <= float(o["arr_min"]):
-                continue
-            score = score_pair(o, r, fare_ar, budget, max_duration, vibe_score, same_day)
-            if score < 0:
-                continue
-            pairs.append({"out": o, "ret": r, "score": score})
-    pairs.sort(key=lambda p: p["score"], reverse=True)
-    return pairs[:MAX_ALTERNATIVES + 1]
-
 stations, routes, cal, trips = load_data()
 fares = load_fares()
-destinations = load_destinations()
-destination_map, station_to_destination = build_destination_map(stations, destinations)
-station_name_map = stations.set_index(stations["station_id"].astype(str))["station_name"].to_dict()
 if not fares.empty:
     fares["_o"] = fares["Gare origine"].map(norm)
     fares["_d"] = fares["Gare destination"].map(norm)
 
 st.title("🚆 En Train Alain")
-st.caption("Tu as un budget, on cherche où partir. — V9 : vraies destinations + plusieurs horaires")
+st.caption("Tu as un budget, on cherche où partir. — V8 : plusieurs horaires")
 
 with st.sidebar:
     st.header("Ton escapade")
@@ -248,12 +340,20 @@ with st.sidebar:
     inbound = st.date_input("Date retour", value=return_default, min_value=outbound, max_value=max_date)
     budget = st.slider("Budget maximum A/R (€)", 20, 300, 100, 5)
     max_leg = st.slider("Durée max par trajet", 1, 8, 4, 1)
-    dep_window = st.selectbox("Départ aller", ["Toute la journée", "Matin (05h–12h)", "Après-midi (12h–18h)", "Soir (18h–23h)"])
-    vibe = st.selectbox("Ambiance", ["Peu importe", "Week-end", "Culture", "Nature", "Soleil", "Gastronomie"])
+    dep_window = st.selectbox(
+        "Départ aller",
+        ["Toute la journée", "Matin (05h–12h)", "Après-midi (12h–18h)", "Soir (18h–23h)"]
+    )
+    vibe = st.selectbox(
+        "Ambiance", ["Peu importe", "Week-end", "Culture", "Nature", "Soleil", "Gastronomie"]
+    )
     search = st.button("🔎 Trouver où partir", type="primary", use_container_width=True)
 
 st.markdown("### Où peux-tu partir ?")
-st.info("Cette version utilise les horaires SNCF réels. Les prix affichés quand disponibles sont des **tarifs indicatifs de référence**, pas le prix en temps réel.")
+st.info(
+    "Cette version utilise les horaires SNCF réels. Les prix affichés quand disponibles "
+    "sont des **tarifs indicatifs de référence**, pas le prix en temps réel."
+)
 
 if search:
     if inbound < outbound:
@@ -272,121 +372,131 @@ if search:
     in_services = active_services(cal, inbound)
     origin_ids = station_ids_for_choice(origin, stations)
 
-    if not out_services or not in_services:
-        st.warning("Aucun service SNCF n'est renseigné pour l'une des dates choisies dans le fichier GTFS.")
+    if not out_services:
+        st.warning("Aucun service SNCF n'est renseigné pour cette date dans le fichier GTFS.")
+        st.stop()
+    if not in_services:
+        st.warning("Aucun service SNCF n'est renseigné pour la date retour dans le fichier GTFS.")
         st.stop()
 
-    destination_ids = set(station_to_destination.keys())
-    same_day = outbound == inbound
-
     with st.spinner("Recherche des escapades réelles…"):
-        # One batched search for all editorial destinations, instead of a loop over 3,423 stations.
-        out_all = direct_journeys(
-            trips, out_services, origin_ids, destination_ids=destination_ids,
+        # On cherche les horaires indépendamment : pas de multiplication artificielle
+        # des combinaisons aller x retour. Chaque destination expose ses options.
+        direct_out = direct_journeys(
+            trips, out_services, origin_ids,
             dep_start=dep_start, dep_end=dep_end, max_duration=max_duration
         )
-        if out_all.empty:
-            st.warning("Aucune destination de notre sélection ne correspond aux critères aller.")
+
+        if direct_out.empty:
+            st.warning("Aucun trajet ferroviaire direct trouvé avec ces critères.")
             st.stop()
 
-        out_all["destination"] = out_all["station_id"].map(station_to_destination)
-        out_all = out_all.dropna(subset=["destination"])
+        candidates = []
+        for station_id, out_group in direct_out.groupby("station_id"):
+            out_group = out_group.sort_values(["dep_min", "arr_min"]).copy()
+            # Garder plusieurs horaires distincts, pas seulement le premier train.
+            out_options = out_group.drop_duplicates(["dep_min", "arr_min"]).head(5)
 
-        # One batched return search for all destination stations back to the selected origin.
-        return_origin_ids = set(out_all["station_id"].astype(str))
-        ret_all = direct_journeys(
-            trips, in_services, return_origin_ids, destination_ids=origin_ids,
-            dep_start=600, dep_end=1500, max_duration=max_duration
-        )
-        if ret_all.empty:
-            st.warning("Les destinations aller trouvées n'ont pas de retour direct correspondant aux critères.")
-            st.stop()
-
-        ret_all["destination"] = ret_all["origin_station_id"].map(station_to_destination)
-        ret_all = ret_all.dropna(subset=["destination"])
-
-        vibe_col = {"Culture": "culture", "Nature": "nature", "Soleil": "soleil", "Gastronomie": "gastronomie"}.get(vibe)
-        vibe_map = destinations.set_index("destination")[vibe_col] if vibe_col else None
-
-        result_rows = []
-        for destination, og in out_all.groupby("destination"):
-            station_ids = set(og["station_id"].astype(str))
-            rg = ret_all[ret_all["origin_station_id"].astype(str).isin(station_ids)]
-            if rg.empty:
+            ret = return_options_direct(
+                trips, in_services, station_id, origin_ids,
+                dep_start=600, dep_end=1500, max_duration=max_duration
+            )
+            if ret.empty:
                 continue
 
-            fare_min = fare_lookup(fares, "PARIS" if origin == "Paris (toutes les gares)" else origin, destination)
-            fare_ar = fare_min * 2 if pd.notna(fare_min) else np.nan
-            vs = float(vibe_map.get(destination, 0.5)) if vibe_map is not None else 0.70
-            outs = pick_options(og, MAX_OPTIONS)
-            rets = pick_options(rg, MAX_OPTIONS)
-            pairs = find_best_pairs(outs, rets, fare_ar, budget, max_duration, vs, same_day)
-            if not pairs:
-                continue
+            ret = ret.sort_values(["dep_min", "arr_min"]).drop_duplicates(
+                ["dep_min", "arr_min"]
+            ).head(5)
 
-            best = pairs[0]
-            o, r = best["out"], best["ret"]
-            result_rows.append({
-                "destination": destination,
-                "arrival_station": o["station_name"],
-                "arrival_station_id": o["station_id"],
-                "origin_station": o["origin_station_id"],
-                "out": o,
-                "ret": r,
-                "alternatives": pairs[1:],
-                "fare_ar": fare_ar,
-                "score": best["score"],
-                "vibe_score": vs,
-            })
+            # Le score de destination reste indépendant des combinaisons :
+            # on utilise les meilleures caractéristiques disponibles côté aller
+            # et côté retour, puis on expose les horaires séparément.
+            best_out = out_options.sort_values("duration").iloc[0]
+            best_ret = ret.sort_values("duration").iloc[0]
+            row = best_out.copy()
+            row["return_duration"] = best_ret["duration"]
+            row["return_departure"] = best_ret["departure_time"]
+            row["return_arrival"] = best_ret["arrival_time"]
+            row["out_options"] = out_options.to_dict("records")
+            row["return_options"] = ret.to_dict("records")
+            row["journey_type"] = "Direct"
+            candidates.append(row)
 
-        results = pd.DataFrame(result_rows)
+        results = pd.DataFrame(candidates)
         if results.empty:
-            st.warning("Aucun aller-retour direct ne correspond à ces critères.")
+            st.warning("Des allers ont été trouvés, mais aucun retour direct compatible n'a été trouvé.")
             st.stop()
 
-        results = results.sort_values(["score", "destination"], ascending=[False, True]).head(30)
+        origin_for_fare = "PARIS" if origin == "Paris (toutes les gares)" else origin
+        results["fare_min"] = [
+            fare_lookup(fares, origin_for_fare, name)
+            for name in results["station_name"]
+        ]
+        results["fare_ar"] = results["fare_min"] * 2
+        results["out_duration"] = pd.to_numeric(results["duration"], errors="coerce")
+        results["return_duration"] = pd.to_numeric(results["return_duration"], errors="coerce")
+        results["total_duration"] = results["out_duration"] + results["return_duration"]
 
-        st.success(f"{len(results)} destinations d'escapade · plusieurs horaires comparés pour chaque destination.")
+        schedule_score = np.clip(
+            1 - np.abs(pd.to_numeric(results["dep_min"], errors="coerce") - 510) / 600,
+            0, 1
+        ).fillna(0)
+        time_score = np.clip(
+            1 - results["total_duration"] / (max_duration * 2), 0, 1
+        ).fillna(0)
+        if results["fare_ar"].notna().any():
+            budget_score = np.where(
+                results["fare_ar"].notna(),
+                np.clip(1 - results["fare_ar"] / budget, 0, 1), 0.5
+            )
+        else:
+            budget_score = np.full(len(results), 0.5)
+
+        results["score"] = (
+            0.45 * budget_score + 0.35 * time_score + 0.20 * schedule_score
+        ) * 100
+        results = results.replace([np.inf, -np.inf], np.nan)
+        results = results.dropna(subset=["out_duration", "return_duration"])
+        results = results.sort_values(["score", "total_duration"], ascending=[False, True]).head(30)
+
+        st.success(f"{len(results)} destinations avec plusieurs horaires disponibles.")
         st.caption(
-            f"Services actifs : {len(out_services)} à l'aller · {len(in_services)} au retour · "
-            f"{len(out_all)} trajets aller analysés · V9"
+            f"Services actifs : {len(out_services)} à l'aller · {len(in_services)} au retour · V8"
         )
 
         for _, r in results.iterrows():
-            o, ret = r["out"], r["ret"]
             fare_text = f"≈ {r['fare_ar']:.0f} € A/R" if pd.notna(r["fare_ar"]) else "prix à vérifier"
-            out_station = str(o["station_name"])
-            out_origin_station = str(station_name_map.get(str(o["origin_station_id"]), o["origin_station_id"]))
-            ret_station = str(station_name_map.get(str(ret["origin_station_id"]), ret["origin_station_id"]))
-            ret_arrival_station = str(ret["station_name"])
-            with st.container(border=True):
-                c1, c2 = st.columns([3, 1])
-                with c1:
-                    st.subheader(str(r["destination"]))
-                    st.write(
-                        f"**Aller — {out_origin_station} → {out_station} :** "
-                        f"{fmt_time(o['dep_min'])} → {fmt_time(o['arr_min'])} · {fmt_duration(o['duration'])}"
-                        f"  \n**Retour — {ret_station} → {ret_arrival_station} :** "
-                        f"{fmt_time(ret['dep_min'])} → {fmt_time(ret['arr_min'])} · {fmt_duration(ret['duration'])}"
-                    )
-                    st.caption(f"Gare d'arrivée : **{out_station}** · trajet direct · {fare_text} · score {r['score']:.0f}/100")
+            out_opts = r["out_options"]
+            ret_opts = r["return_options"]
 
-                    alternatives = r["alternatives"]
-                    if alternatives:
-                        with st.expander("Voir d'autres horaires"):
-                            for i, p in enumerate(alternatives, 1):
-                                ao, ar = p["out"], p["ret"]
-                                st.write(
-                                    f"**Option {i}** · Aller {fmt_time(ao['dep_min'])} → {fmt_time(ao['arr_min'])} "
-                                    f"({fmt_duration(ao['duration'])}) · Retour {fmt_time(ar['dep_min'])} → {fmt_time(ar['arr_min'])} "
-                                    f"({fmt_duration(ar['duration'])}) · score {p['score']:.0f}/100"
-                                )
+            with st.container(border=True):
+                c1, c2 = st.columns([4, 1])
+                with c1:
+                    st.subheader(str(r["station_name"]).title())
+                    st.caption(f"{fare_text} · score {r['score']:.0f}/100")
+
+                    st.markdown("**🚆 Allers disponibles**")
+                    for o in out_opts:
+                        st.write(
+                            f"{fmt_time(o['dep_min'])} → {fmt_time(o['arr_min'])} · "
+                            f"{fmt_duration(o['duration'])}"
+                        )
+
+                    st.markdown("**↩️ Retours disponibles**")
+                    for rr in ret_opts:
+                        st.write(
+                            f"{fmt_time(rr['dep_min'])} → {fmt_time(rr['arr_min'])} · "
+                            f"{fmt_duration(rr['duration'])}"
+                        )
+
+                    st.caption("Les allers et retours sont présentés séparément : à toi de choisir la combinaison qui te convient.")
                 with c2:
                     st.metric("Deal Score", f"{r['score']:.0f}/100")
+
 else:
     st.markdown("""
     **Exemple :** choisis Paris, un week-end et un budget de 100 €.
 
-    En Train Alain part d'une **sélection de vraies destinations**, cherche plusieurs horaires aller et retour,
-    puis te présente la combinaison la plus intéressante — avec les autres horaires disponibles en option.
+    En Train Alain cherche des destinations réellement desservies,
+    puis affiche plusieurs possibilités d'aller et de retour pour chacune.
     """)
