@@ -1,35 +1,17 @@
-# En Train Alain — V10
+# En Train Alain — V10 corrigée
 
-V10 est la version propre du prototype SNCF réel.
+Cette version :
+- utilise les horaires SNCF GTFS réels ;
+- affiche les allers et les retours séparément ;
+- ne tente pas de fabriquer une combinaison aller/retour ;
+- affiche plusieurs horaires disponibles pour chaque destination ;
+- écarte les destinations à moins de 70 km du départ pour éviter les trajets locaux type RER/Transilien dans le MVP ;
+- conserve les tarifs TGV INOUI/OUIGO comme tarifs indicatifs de référence ;
+- corrige l'erreur pandas `The truth value of a DataFrame is ambiguous` observée dans la V8.
 
-## Ce que fait V10
+## Déploiement
 
-- utilise les horaires SNCF GTFS réels présents dans `data/`
-- cherche des destinations ferroviaires hors du bassin parisien immédiat
-- affiche plusieurs **allers disponibles**
-- affiche plusieurs **retours disponibles**
-- ne fabrique pas une combinaison aller/retour imposée
-- accepte les trajets directs et, si nécessaire, les trajets avec 1 correspondance
-- garde les tarifs SNCF comme **références indicatives**, pas comme prix temps réel
-- affiche clairement la version V10
+Remplacer `app.py`, `requirements.txt` et `README.md` dans le dépôt GitHub.
+Conserver le dossier `data/` avec ses 5 fichiers existants.
 
-## Données attendues
-
-Conserver dans `data/` les fichiers déjà présents dans le dépôt :
-
-- `stations.csv`
-- `routes.csv`
-- `calendar_dates.csv`
-- `trip_stops.csv.gz`
-- `tarifs-tgv-inoui-ouigo.csv`
-
-## Installation
-
-```bash
-pip install -r requirements.txt
-streamlit run app.py
-```
-
-## Important
-
-V10 ne connaît toujours pas les prix de vente en temps réel. La prochaine étape commerciale/technique reste le branchement d'une API tarifaire/availability (par exemple Tictactrip) sur les destinations prometteuses.
+Puis attendre le redéploiement Streamlit.
