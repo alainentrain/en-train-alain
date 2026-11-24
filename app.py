@@ -60,22 +60,10 @@ def fmt_duration(minutes):
     return f"{minutes // 60} h {minutes % 60:02d}"
 
 def fmt_time(x):
-    """Format GTFS time values whether they are numeric minutes or HH:MM:SS strings."""
     if pd.isna(x):
         return "—"
-    s = str(x).strip()
-    if ":" in s:
-        try:
-            h, m, sec = s.split(":")
-            total = int(h) * 60 + int(m)
-            return f"{(total // 60) % 24:02d}:{total % 60:02d}"
-        except Exception:
-            return s[:5]
-    try:
-        total = int(round(float(s)))
-        return f"{(total // 60) % 24:02d}:{total % 60:02d}"
-    except Exception:
-        return s
+    m = int(round(float(x)))
+    return f"{(m // 60) % 24:02d}:{m % 60:02d}"
 
 def active_services(cal, d):
     ds = d.strftime("%Y%m%d")
@@ -233,11 +221,13 @@ def one_connection_journeys(trips, services, origin_ids,
         "station_name": "transfer_station_name",
     })
 
+    # Keep the transfer station name from the first leg.
+    # The second leg uses the same station_id, so there is no need to
+    # rename its station_name to the same column.
     merged = merged.merge(
         second.rename(columns={
             "trip_id": "second_trip_id",
             "station_id": "transfer_station_id",
-            "station_name": "transfer_station_name",
         }),
         on="transfer_station_id",
         how="inner",
@@ -340,7 +330,7 @@ if not fares.empty:
     fares["_d"] = fares["Gare destination"].map(norm)
 
 st.title("🚆 En Train Alain")
-st.caption("Tu as un budget, on cherche où partir. — V8 : directs + 1 correspondance")
+st.caption("Tu as un budget, on cherche où partir. — V8.1 : directs + 1 correspondance")
 
 with st.sidebar:
     st.header("Ton escapade")
@@ -579,7 +569,7 @@ if search:
         )
         st.caption(
             f"Services actifs : {len(out_services)} à l'aller · "
-            f"{len(in_services)} au retour · V8"
+            f"{len(in_services)} au retour · V8.1"
         )
 
         for _, r in results.iterrows():
