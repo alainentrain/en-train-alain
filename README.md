@@ -1,18 +1,32 @@
-# En Train Alain — V5.1
+# En Train Alain — V6
 
-Prototype Streamlit basé sur les horaires SNCF GTFS réels.
+V6 fait évoluer le prototype vers une logique de recherche d'escapades :
 
-## Données locales
-- `data/stations.csv` : gares / points d'arrêt ferroviaires
-- `data/routes.csv` : lignes SNCF
-- `data/calendar_dates.csv` : dates de circulation
-- `data/trip_stops.csv.gz` : horaires des arrêts et trajets
-- `data/tarifs-tgv-inoui-ouigo.csv` : tarifs indicatifs TGV INOUI / OUIGO
+- horaires SNCF réels issus du GTFS déjà préparé ;
+- TER / TGV / Intercités inclus lorsqu'ils sont présents comme services ferroviaires ;
+- aller + retour ;
+- recherche directe en priorité ;
+- extension à 1 correspondance si le pool direct est insuffisant ;
+- budget A/R ;
+- durée maximale par trajet ;
+- fenêtre de départ ;
+- score de pertinence ;
+- tarifs SNCF TGV INOUI / OUIGO affichés uniquement comme références, jamais comme prix temps réel.
 
-## V5.1 — corrections
-- normalisation des `service_id` entre `calendar_dates.csv` et `trip_stops.csv.gz` (le calendrier utilise des identifiants avec zéros en tête) ;
-- conservation correcte de l'heure de départ à la gare d'origine lors de la construction d'un trajet ;
-- recherche ferroviaire basée sur les trajets `route_type = 2`, ce qui inclut les services ferroviaires régionaux présents dans le GTFS ;
-- lorsqu'aucun tarif ouvert n'est disponible, le résultat reste affichable avec « prix à vérifier » au lieu d'être supprimé.
+## Installation
 
-Les prix affichés ne sont pas des prix de vente en temps réel.
+Conserver le dossier `data/` déjà utilisé par V5.1 à côté de `app.py` :
+
+- `calendar_dates.csv`
+- `routes.csv`
+- `stations.csv`
+- `tarifs-tgv-inoui-ouigo.csv`
+- `trip_stops.csv.gz`
+
+Puis déployer sur Streamlit Community Cloud avec `app.py` comme fichier principal.
+
+## Important
+
+V6 ne prétend pas encore connaître le prix réel disponible à une date donnée.
+La prochaine brique commerciale sera le branchement de l'API de métarecherche
+/ réservation (ex. Tictactrip) après génération des meilleures destinations.
