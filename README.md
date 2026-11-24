@@ -1,32 +1,27 @@
-# En Train Alain — V6
+# En Train Alain — V7
 
-V6 fait évoluer le prototype vers une logique de recherche d'escapades :
+Prototype Streamlit basé sur les données GTFS SNCF locales.
 
-- horaires SNCF réels issus du GTFS déjà préparé ;
-- TER / TGV / Intercités inclus lorsqu'ils sont présents comme services ferroviaires ;
-- aller + retour ;
-- recherche directe en priorité ;
-- extension à 1 correspondance si le pool direct est insuffisant ;
-- budget A/R ;
-- durée maximale par trajet ;
-- fenêtre de départ ;
-- score de pertinence ;
-- tarifs SNCF TGV INOUI / OUIGO affichés uniquement comme références, jamais comme prix temps réel.
+### V7
+- trajets directs à l'aller et au retour ;
+- trajets avec une correspondance possible à l'aller ;
+- retour direct ou avec une correspondance ;
+- contrôle de la durée totale ;
+- correction du crash `NaN` lors de l'affichage des durées ;
+- conservation des 5 fichiers de données existants dans `data/`.
 
-## Installation
+### Installation
+```bash
+pip install -r requirements.txt
+streamlit run app.py
+```
 
-Conserver le dossier `data/` déjà utilisé par V5.1 à côté de `app.py` :
-
+### Données attendues
+Conserver dans `data/` :
 - `calendar_dates.csv`
 - `routes.csv`
 - `stations.csv`
 - `tarifs-tgv-inoui-ouigo.csv`
 - `trip_stops.csv.gz`
 
-Puis déployer sur Streamlit Community Cloud avec `app.py` comme fichier principal.
-
-## Important
-
-V6 ne prétend pas encore connaître le prix réel disponible à une date donnée.
-La prochaine brique commerciale sera le branchement de l'API de métarecherche
-/ réservation (ex. Tictactrip) après génération des meilleures destinations.
+Les prix affichés sont des tarifs indicatifs de référence, pas des prix temps réel.
