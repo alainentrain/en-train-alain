@@ -1,16 +1,9 @@
-def deal_score(price, duration_hours, direct, budget, reference_price, appeal):
-    # Score volontairement simple pour le prototype.
-    price_ratio = max(0, min(1, (reference_price - price) / max(reference_price, 1)))
-    budget_fit = max(0, min(1, (budget - price) / max(budget, 1)))
-    duration_fit = max(0, min(1, 1 - (duration_hours - 1) / 7))
-    direct_bonus = 1 if direct else 0.45
-    appeal_fit = max(0, min(1, appeal / 10))
-
-    score = (
-        40 * price_ratio +
-        20 * budget_fit +
-        15 * duration_fit +
-        10 * direct_bonus +
-        15 * appeal_fit
-    )
-    return round(score)
+def deal_score(price, budget, duration_hours, vibe_bonus=0):
+    """
+    Utility kept separate for future iterations.
+    The current engine uses the same principles:
+    affordability + short travel time + user preference.
+    """
+    price_part = max(0, 35 - (price / max(budget, 1)) * 25)
+    duration_part = max(0, 25 - duration_hours * 5)
+    return round(min(100, 35 + price_part + duration_part + vibe_bonus))

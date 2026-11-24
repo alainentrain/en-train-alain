@@ -1,41 +1,51 @@
-# 🚂 En Train Alain — prototype V1
+# 🚂 En Train Alain — prototype V2
 
-> Tu as un budget. On trouve où partir.
+> **Tu as un budget. On trouve où partir.**
 
-Prototype mobile-first construit avec Streamlit.
+Prototype Streamlit mobile-first.
 
-## Déploiement Streamlit
+## Ce qui change dans la V2
 
-- Repository : `alainentrain/en-train-alain`
-- Branch : `main`
-- Main file path : `app.py`
+Le moteur ne repose plus uniquement sur le jeu de données fictif de la V1.
 
-## Fonctionnement actuel
+Il interroge le jeu officiel **SNCF Open Data — Tarifs TGV INOUI et OUIGO** lorsqu'il est accessible.
 
-Le prototype utilise un jeu de données local pour fonctionner immédiatement sans clé API.
+Ce jeu contient des **prix minimum / maximum par origine-destination et profil tarifaire**. Il est mis à jour annuellement. Il ne s'agit donc pas d'un prix temps réel pour un train donné.
 
-Le moteur :
-1. reçoit un départ, un budget, une date, une durée maximale et une envie ;
-2. filtre les destinations ;
-3. calcule un **Deal Score** ;
-4. affiche les meilleures options.
+Source officielle :
+https://ressources.data.sncf.com/explore/dataset/tarifs-tgv-inoui-ouigo/
 
-Les prix sont **indicatifs** : ils ne représentent pas une disponibilité commerciale temps réel.
+Pour les horaires et le temps réel, SNCF publie également des données GTFS/GTFS-RT et une API SNCF.
 
-## Prochaine étape
+## Architecture
 
-Brancher :
-- les données ouvertes SNCF pour le réseau et les horaires ;
-- une source commerciale pour vérifier prix/disponibilité ;
-- la redirection réservation.
+Utilisateur
+→ moteur de découverte
+→ données SNCF Open Data
+→ candidats
+→ Deal Score
+→ vérification commerciale temps réel
+→ réservation
 
-Architecture visée :
-
-`Utilisateur → moteur de découverte → données ouvertes → candidats → score → vérification temps réel → réservation`
-
-## Lancer localement
+## Lancer
 
 ```bash
 pip install -r requirements.txt
 streamlit run app.py
 ```
+
+## Déploiement Streamlit
+
+- Repository : `alainentrain/en-train-alain`
+- Branch : `main`
+- Main file : `app.py`
+
+## Prochaine étape
+
+Connecter une source commerciale (par exemple Tictactrip) pour vérifier :
+- prix réellement disponibles à la date demandée ;
+- disponibilité ;
+- itinéraire précis ;
+- lien de réservation.
+
+**Ne jamais présenter le prix Open Data comme un prix garanti ou temps réel.**

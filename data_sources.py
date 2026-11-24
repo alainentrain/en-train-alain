@@ -1,127 +1,44 @@
-# Prototype V1 : jeu de données local pour que l'application fonctionne
-# immédiatement sur Streamlit, sans clé API.
-#
-# La prochaine étape sera de remplacer/compléter cette source par :
-# - données ouvertes SNCF pour horaires/réseau,
-# - puis vérification temps réel via un partenaire commercial
-# (ex. Tictactrip) pour prix et disponibilité.
+import requests
+import pandas as pd
+from pathlib import Path
 
-DEMO_DESTINATIONS = [
-    {
-        "destination": "Lille",
-        "route": "Paris → Lille",
-        "duration": "≈ 1h02",
-        "duration_hours": 1.03,
-        "price": 29,
-        "reference_price": 60,
-        "direct": True,
-        "type": "TGV",
-        "vibes": ["Ville", "Culture"],
-        "appeal": 8,
-        "reason": "Très bon rapport temps / prix",
-    },
-    {
-        "destination": "Reims",
-        "route": "Paris → Reims",
-        "duration": "≈ 0h46",
-        "duration_hours": .77,
-        "price": 22,
-        "reference_price": 45,
-        "direct": True,
-        "type": "TGV",
-        "vibes": ["Ville", "Culture"],
-        "appeal": 7,
-        "reason": "Une escapade très facile depuis Paris",
-    },
-    {
-        "destination": "Rouen",
-        "route": "Paris → Rouen",
-        "duration": "≈ 1h30",
-        "duration_hours": 1.5,
-        "price": 18,
-        "reference_price": 35,
-        "direct": True,
-        "type": "TER",
-        "vibes": ["Ville", "Culture"],
-        "appeal": 7,
-        "reason": "Petit budget, départ simple",
-    },
-    {
-        "destination": "Strasbourg",
-        "route": "Paris → Strasbourg",
-        "duration": "≈ 1h45",
-        "duration_hours": 1.75,
-        "price": 39,
-        "reference_price": 85,
-        "direct": True,
-        "type": "TGV",
-        "vibes": ["Ville", "Culture"],
-        "appeal": 9,
-        "reason": "Une grosse escapade dans ton budget",
-    },
-    {
-        "destination": "Dijon",
-        "route": "Paris → Dijon",
-        "duration": "≈ 1h35",
-        "duration_hours": 1.58,
-        "price": 25,
-        "reference_price": 55,
-        "direct": True,
-        "type": "TGV",
-        "vibes": ["Ville", "Culture"],
-        "appeal": 8,
-        "reason": "Très intéressant pour une journée ou un week-end",
-    },
-    {
-        "destination": "Tours",
-        "route": "Paris → Tours",
-        "duration": "≈ 1h15",
-        "duration_hours": 1.25,
-        "price": 24,
-        "reference_price": 50,
-        "direct": True,
-        "type": "TGV",
-        "vibes": ["Ville", "Culture", "Nature"],
-        "appeal": 8,
-        "reason": "Bon compromis entre prix et dépaysement",
-    },
-    {
-        "destination": "La Rochelle",
-        "route": "Paris → La Rochelle",
-        "duration": "≈ 2h45",
-        "duration_hours": 2.75,
-        "price": 49,
-        "reference_price": 100,
-        "direct": True,
-        "type": "TGV",
-        "vibes": ["Mer", "Soleil"],
-        "appeal": 10,
-        "reason": "Le profil parfait pour chercher la mer",
-    },
-    {
-        "destination": "Avignon",
-        "route": "Paris → Avignon",
-        "duration": "≈ 2h40",
-        "duration_hours": 2.67,
-        "price": 59,
-        "reference_price": 120,
-        "direct": True,
-        "type": "TGV",
-        "vibes": ["Soleil", "Culture"],
-        "appeal": 10,
-        "reason": "Beau potentiel de week-end dans le Sud",
-    },
-    {
-        "destination": "Annecy",
-        "route": "Paris → Annecy",
-        "duration": "≈ 3h40",
-        "duration_hours": 3.67,
-        "price": 65,
-        "reference_price": 120,
-        "direct": True,
-        "type": "TGV",
-        "vibes": ["Nature", "Soleil"],
-        "appeal": 10,
-        "reason": "Le dépaysement devient accessible",
-    },
-]
+SNCF_DATASET_URL = (
+    "https://ressources.data.sncf.com/api/explore/v2.1/catalog/datasets/"
+    "tarifs-tgv-inoui-ouigo/records"
+)
+
+FALLBACK = Path(__file__).parent / "data" / "fallback_fares.csv"
+
+def _normalise_station(value: str) -> str:
+    value = (value or "").strip().upper()
+    value = value.replace("PARIS", "PARIS")
+    return value
+
+def get_live_sncF_fares(departure: str):
+    """
+    Returns (DataFrame, status).
+    The SNCF dataset contains annual min/max fare ranges by origin/destination,
+    not date-specific live inventory.
+    """
+    dep = _normalise_station(departure)
+    where = f"search(gare_origine, '{dep}')"
+
+    params = {
+        "limit": 100,
+        "where": where,
+        "select": (
+            "transporteur,gare_origine,gare_destination,"
+            "prix_minimum,prix_maximum"
+        ),
+    }
+
+    try:
+        r = requests.get(SNCF_DATASET_URL, params=params, timeout=12)
+        r.raise_for_status()
+        data = r.json().get("results", [])
+        if data:
+            return pd.DataFrame(data), "live"
+    except Exception:
+        pass
+
+    return pd.read_csv(FALLBACK), "fallback"
