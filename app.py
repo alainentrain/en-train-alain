@@ -60,10 +60,28 @@ def fmt_duration(minutes):
     return f"{minutes // 60} h {minutes % 60:02d}"
 
 def fmt_time(x):
+    """Format GTFS time values whether they are numeric minutes or HH:MM:SS strings."""
     if pd.isna(x):
         return "—"
-    m = int(round(float(x)))
-    return f"{(m // 60) % 24:02d}:{m % 60:02d}"
+
+    s = str(x).strip()
+
+    # GTFS horaires are normally HH:MM:SS.
+    if ":" in s:
+        try:
+            parts = s.split(":")
+            h = int(parts[0])
+            m = int(parts[1])
+            return f"{h % 24:02d}:{m:02d}"
+        except (ValueError, IndexError):
+            return "—"
+
+    # Also accept numeric minutes, used internally by the app.
+    try:
+        total = int(round(float(s)))
+        return f"{(total // 60) % 24:02d}:{total % 60:02d}"
+    except (ValueError, TypeError):
+        return "—"
 
 def active_services(cal, d):
     ds = d.strftime("%Y%m%d")
@@ -221,13 +239,11 @@ def one_connection_journeys(trips, services, origin_ids,
         "station_name": "transfer_station_name",
     })
 
-    # Keep the transfer station name from the first leg.
-    # The second leg uses the same station_id, so there is no need to
-    # rename its station_name to the same column.
     merged = merged.merge(
         second.rename(columns={
             "trip_id": "second_trip_id",
             "station_id": "transfer_station_id",
+            "station_name": "transfer_station_name",
         }),
         on="transfer_station_id",
         how="inner",
@@ -330,7 +346,7 @@ if not fares.empty:
     fares["_d"] = fares["Gare destination"].map(norm)
 
 st.title("🚆 En Train Alain")
-st.caption("Tu as un budget, on cherche où partir. — V8.1 : directs + 1 correspondance")
+st.caption("Tu as un budget, on cherche où partir. — V7 : directs + 1 correspondance")
 
 with st.sidebar:
     st.header("Ton escapade")
@@ -569,7 +585,7 @@ if search:
         )
         st.caption(
             f"Services actifs : {len(out_services)} à l'aller · "
-            f"{len(in_services)} au retour · V8.1"
+            f"{len(in_services)} au retour · V7"
         )
 
         for _, r in results.iterrows():
