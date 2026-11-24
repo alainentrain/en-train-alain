@@ -1,16 +1,21 @@
 # En Train Alain — V10
 
-Prototype Streamlit basé sur les horaires SNCF GTFS réels.
+Prototype Streamlit de découverte de destinations ferroviaires.
 
 ## V10
-- Plusieurs horaires d’aller par destination.
-- Plusieurs horaires de retour par destination.
-- Les horaires sont présentés séparément : aucune combinaison aller × retour n’est imposée dans l’interface.
-- Les destinations restent classées par Deal Score.
-- Les prix sont des tarifs indicatifs de référence, pas des prix temps réel.
 
-## Fichiers de données requis
-Dans `data/` :
+- utilise les horaires SNCF réels présents dans `data/`
+- filtre les destinations trop proches de Paris pour éviter que les résultats soient dominés par les gares RER / Transilien
+- conserve les trajets directs et peut utiliser 1 correspondance comme solution de secours
+- affiche plusieurs **allers disponibles**
+- affiche plusieurs **retours disponibles**
+- ne fabrique pas de combinaison aller × retour
+- les tarifs sont des références indicatives, pas des prix temps réel
+- le Deal Score sert à classer les destinations, pas à annoncer un prix garanti
+
+## Fichiers de données attendus
+
+`data/`
 - `stations.csv`
 - `routes.csv`
 - `calendar_dates.csv`
@@ -18,4 +23,8 @@ Dans `data/` :
 - `tarifs-tgv-inoui-ouigo.csv`
 
 ## Déploiement
-Le fichier principal est `app.py`. Installer les dépendances avec `requirements.txt`.
+
+Remplacer `app.py`, `requirements.txt` et `README.md` dans le dépôt GitHub.
+Conserver le dossier `data/` actuel.
+
+Streamlit Cloud relancera ensuite l'application depuis le nouveau `app.py`.
