@@ -1,30 +1,35 @@
 # En Train Alain — V10
 
-Prototype Streamlit de découverte de destinations ferroviaires.
+V10 est la version propre du prototype SNCF réel.
 
-## V10
+## Ce que fait V10
 
-- utilise les horaires SNCF réels présents dans `data/`
-- filtre les destinations trop proches de Paris pour éviter que les résultats soient dominés par les gares RER / Transilien
-- conserve les trajets directs et peut utiliser 1 correspondance comme solution de secours
+- utilise les horaires SNCF GTFS réels présents dans `data/`
+- cherche des destinations ferroviaires hors du bassin parisien immédiat
 - affiche plusieurs **allers disponibles**
 - affiche plusieurs **retours disponibles**
-- ne fabrique pas de combinaison aller × retour
-- les tarifs sont des références indicatives, pas des prix temps réel
-- le Deal Score sert à classer les destinations, pas à annoncer un prix garanti
+- ne fabrique pas une combinaison aller/retour imposée
+- accepte les trajets directs et, si nécessaire, les trajets avec 1 correspondance
+- garde les tarifs SNCF comme **références indicatives**, pas comme prix temps réel
+- affiche clairement la version V10
 
-## Fichiers de données attendus
+## Données attendues
 
-`data/`
+Conserver dans `data/` les fichiers déjà présents dans le dépôt :
+
 - `stations.csv`
 - `routes.csv`
 - `calendar_dates.csv`
 - `trip_stops.csv.gz`
 - `tarifs-tgv-inoui-ouigo.csv`
 
-## Déploiement
+## Installation
 
-Remplacer `app.py`, `requirements.txt` et `README.md` dans le dépôt GitHub.
-Conserver le dossier `data/` actuel.
+```bash
+pip install -r requirements.txt
+streamlit run app.py
+```
 
-Streamlit Cloud relancera ensuite l'application depuis le nouveau `app.py`.
+## Important
+
+V10 ne connaît toujours pas les prix de vente en temps réel. La prochaine étape commerciale/technique reste le branchement d'une API tarifaire/availability (par exemple Tictactrip) sur les destinations prometteuses.
