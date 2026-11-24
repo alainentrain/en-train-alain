@@ -60,10 +60,22 @@ def fmt_duration(minutes):
     return f"{minutes // 60} h {minutes % 60:02d}"
 
 def fmt_time(x):
+    """Format GTFS time values whether they are numeric minutes or HH:MM:SS strings."""
     if pd.isna(x):
         return "—"
-    m = int(round(float(x)))
-    return f"{(m // 60) % 24:02d}:{m % 60:02d}"
+    s = str(x).strip()
+    if ":" in s:
+        try:
+            h, m, sec = s.split(":")
+            total = int(h) * 60 + int(m)
+            return f"{(total // 60) % 24:02d}:{total % 60:02d}"
+        except Exception:
+            return s[:5]
+    try:
+        total = int(round(float(s)))
+        return f"{(total // 60) % 24:02d}:{total % 60:02d}"
+    except Exception:
+        return s
 
 def active_services(cal, d):
     ds = d.strftime("%Y%m%d")
@@ -221,24 +233,16 @@ def one_connection_journeys(trips, services, origin_ids,
         "station_name": "transfer_station_name",
     })
 
-    # Important: transfer_station_name already exists on the left side
-    # (the first leg). Do not rename the second leg's station_name to the
-    # same column name, otherwise pandas creates transfer_station_name_x/y
-    # and the later code cannot find transfer_station_name.
     merged = merged.merge(
         second.rename(columns={
             "trip_id": "second_trip_id",
             "station_id": "transfer_station_id",
+            "station_name": "transfer_station_name",
         }),
         on="transfer_station_id",
         how="inner",
     )
     merged = merged[merged["second_trip_id"] != merged["first_trip_id"]]
-
-    if "transfer_station_name" not in merged.columns:
-        st.error("Erreur interne : la gare de correspondance n'a pas pu être identifiée.")
-        return pd.DataFrame()
-
     merged["wait"] = merged["second_dep"] - merged["transfer_arr"]
     merged = merged[
         merged["wait"].between(min_transfer, max_transfer)
@@ -336,7 +340,7 @@ if not fares.empty:
     fares["_d"] = fares["Gare destination"].map(norm)
 
 st.title("🚆 En Train Alain")
-st.caption("Tu as un budget, on cherche où partir. — V7 : directs + 1 correspondance")
+st.caption("Tu as un budget, on cherche où partir. — V8 : directs + 1 correspondance")
 
 with st.sidebar:
     st.header("Ton escapade")
@@ -575,7 +579,7 @@ if search:
         )
         st.caption(
             f"Services actifs : {len(out_services)} à l'aller · "
-            f"{len(in_services)} au retour · V7"
+            f"{len(in_services)} au retour · V8"
         )
 
         for _, r in results.iterrows():
