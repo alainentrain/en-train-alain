@@ -1,62 +1,58 @@
 import streamlit as st
 from datetime import date, timedelta
-from engine import search_destinations
+from engine import find_destinations
 
 st.set_page_config(
     page_title="En Train Alain",
-    page_icon="🚆",
+    page_icon="🚂",
     layout="centered",
     initial_sidebar_state="collapsed",
 )
 
 st.markdown("""
 <style>
-.block-container {max-width: 760px; padding-top: 2rem; padding-bottom: 4rem;}
-h1 {letter-spacing: -1px;}
-.eta-card {padding: 18px; border-radius: 18px; border: 1px solid #e7e7e7; margin-bottom: 14px;}
-.price {font-size: 1.35rem; font-weight: 800;}
-.small {color:#666; font-size:.9rem;}
-.badge {display:inline-block; padding:4px 9px; border-radius:999px; background:#f2f2f2; margin-right:5px; font-size:.78rem;}
+.block-container {max-width: 720px; padding-top: 1.5rem;}
+h1 {font-size: 2.1rem !important; margin-bottom: .2rem;}
+.eta-card {padding: 1rem 1.1rem; border: 1px solid #e8e8e8; border-radius: 18px; margin-bottom: .8rem; background: white;}
+.score {font-weight: 800; font-size: 1.15rem;}
+.small {color:#666; font-size:.85rem;}
 </style>
 """, unsafe_allow_html=True)
 
-st.title("🚆 En Train Alain")
+st.title("🚂 En Train Alain")
 st.subheader("Tu as un budget. On trouve où partir.")
-
 st.caption("Prototype V1 — moteur de découverte ferroviaire")
 
-with st.form("search"):
-    col1, col2 = st.columns(2)
-    with col1:
-        origin = st.text_input("📍 Départ", "Paris")
-    with col2:
-        budget = st.number_input("💶 Budget max", min_value=10, max_value=1000, value=80, step=5)
+col1, col2 = st.columns(2)
+with col1:
+    depart = st.text_input("📍 Départ", "Paris")
+with col2:
+    budget = st.number_input("💶 Budget max", min_value=10, max_value=1000, value=80, step=5)
 
-    col1, col2 = st.columns(2)
-    with col1:
-        departure = st.date_input("📅 Date de départ", date.today() + timedelta(days=3))
-    with col2:
-        max_duration = st.selectbox("⏱️ Durée max", [2, 3, 4, 5, 6, 8, 12], index=3,
-                                    format_func=lambda x: f"{x} h")
+col3, col4 = st.columns(2)
+with col3:
+    dep_date = st.date_input("📅 Date de départ", date.today() + timedelta(days=4))
+with col4:
+    max_duration = st.number_input("⏱️ Durée max", min_value=1, max_value=12, value=5, step=1)
 
-    vibe = st.multiselect(
-        "✨ J'ai envie de…",
-        ["mer", "soleil", "culture", "nature", "week-end", "romantique"],
-        default=["week-end"],
-    )
+flex = st.selectbox("🗓️ Flexibilité", ["Date précise", "± 1 jour", "Week-end", "± 3 jours"])
+vibe = st.selectbox(
+    "✨ Tu cherches plutôt…",
+    ["Peu importe", "Mer", "Ville", "Nature", "Culture", "Soleil"],
+)
 
-    submitted = st.form_submit_button("🔎 Trouve-moi une destination", use_container_width=True)
-
-if submitted:
-    results = search_destinations(
-        origin=origin,
-        budget=float(budget),
-        departure=departure,
+if st.button("🔎 Trouve-moi une destination", use_container_width=True, type="primary"):
+    results = find_destinations(
+        depart=depart,
+        budget=budget,
+        departure_date=dep_date,
         max_duration=max_duration,
-        vibes=vibe,
+        flexibility=flex,
+        vibe=vibe,
     )
 
-    st.markdown(f"### Tes meilleures options depuis {origin}")
+    st.divider()
+    st.markdown("### Tes meilleures options")
 
     if not results:
         st.warning("Aucune destination ne correspond à ces critères dans le prototype.")
@@ -64,20 +60,23 @@ if submitted:
         for r in results:
             st.markdown(f"""
             <div class="eta-card">
-                <div style="font-size:1.25rem;font-weight:800">{r['destination']}</div>
-                <div class="small">{r['region']} · {r['duration']:.1f} h · {r['direct']}</div>
-                <br>
-                <span class="price">≈ {r['price']} €</span>
-                <span class="badge">Deal Score {r['score']}/100</span>
-                <span class="badge">{r['reason']}</span>
+                <div style="display:flex;justify-content:space-between;gap:10px;">
+                    <div>
+                        <div style="font-size:1.25rem;font-weight:800;">{r['destination']}</div>
+                        <div class="small">{r['route']} · {r['duration']} · {r['type']}</div>
+                    </div>
+                    <div class="score">{r['score']}/100</div>
+                </div>
+                <div style="margin-top:.7rem;font-size:1.05rem;">
+                    <b>≈ {r['price']} €</b> · {r['reason']}
+                </div>
+                <div class="small" style="margin-top:.35rem;">
+                    {r['date_label']} · {r['direct']}
+                </div>
             </div>
             """, unsafe_allow_html=True)
 
-            c1, c2 = st.columns(2)
-            with c1:
-                st.button(f"❤️ {r['destination']}", key=f"fav_{r['destination']}")
-            with c2:
-                st.button("Voir le trajet →", key=f"go_{r['destination']}")
+        st.caption("Prototype : les prix affichés sont indicatifs et ne constituent pas une disponibilité commerciale en temps réel.")
 
 st.divider()
-st.caption("Prototype : les prix affichés sont indicatifs et ne constituent pas une disponibilité commerciale en temps réel.")
+st.caption("En Train Alain — chercher où partir avant de chercher comment réserver.")

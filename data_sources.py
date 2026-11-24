@@ -1,20 +1,127 @@
-"""
-Data-source adapters for En Train Alain.
+# Prototype V1 : jeu de données local pour que l'application fonctionne
+# immédiatement sur Streamlit, sans clé API.
+#
+# La prochaine étape sera de remplacer/compléter cette source par :
+# - données ouvertes SNCF pour horaires/réseau,
+# - puis vérification temps réel via un partenaire commercial
+# (ex. Tictactrip) pour prix et disponibilité.
 
-V1 intentionally runs in DEMO mode so the Streamlit deployment works
-without credentials or paid API access.
-
-Next step:
-- connect SNCF open-data datasets for stations, schedules, real-time data,
-  reference fares and MAX availability;
-- add a Tictactrip adapter for current retail prices, availability and
-  booking/redirection.
-
-Do not put API secrets directly in this file. Use Streamlit secrets or
-environment variables in production.
-"""
-
-import os
-
-SNCF_API_TOKEN = os.getenv("SNCF_API_TOKEN", "")
-TICTACTRIP_API_KEY = os.getenv("TICTACTRIP_API_KEY", "")
+DEMO_DESTINATIONS = [
+    {
+        "destination": "Lille",
+        "route": "Paris → Lille",
+        "duration": "≈ 1h02",
+        "duration_hours": 1.03,
+        "price": 29,
+        "reference_price": 60,
+        "direct": True,
+        "type": "TGV",
+        "vibes": ["Ville", "Culture"],
+        "appeal": 8,
+        "reason": "Très bon rapport temps / prix",
+    },
+    {
+        "destination": "Reims",
+        "route": "Paris → Reims",
+        "duration": "≈ 0h46",
+        "duration_hours": .77,
+        "price": 22,
+        "reference_price": 45,
+        "direct": True,
+        "type": "TGV",
+        "vibes": ["Ville", "Culture"],
+        "appeal": 7,
+        "reason": "Une escapade très facile depuis Paris",
+    },
+    {
+        "destination": "Rouen",
+        "route": "Paris → Rouen",
+        "duration": "≈ 1h30",
+        "duration_hours": 1.5,
+        "price": 18,
+        "reference_price": 35,
+        "direct": True,
+        "type": "TER",
+        "vibes": ["Ville", "Culture"],
+        "appeal": 7,
+        "reason": "Petit budget, départ simple",
+    },
+    {
+        "destination": "Strasbourg",
+        "route": "Paris → Strasbourg",
+        "duration": "≈ 1h45",
+        "duration_hours": 1.75,
+        "price": 39,
+        "reference_price": 85,
+        "direct": True,
+        "type": "TGV",
+        "vibes": ["Ville", "Culture"],
+        "appeal": 9,
+        "reason": "Une grosse escapade dans ton budget",
+    },
+    {
+        "destination": "Dijon",
+        "route": "Paris → Dijon",
+        "duration": "≈ 1h35",
+        "duration_hours": 1.58,
+        "price": 25,
+        "reference_price": 55,
+        "direct": True,
+        "type": "TGV",
+        "vibes": ["Ville", "Culture"],
+        "appeal": 8,
+        "reason": "Très intéressant pour une journée ou un week-end",
+    },
+    {
+        "destination": "Tours",
+        "route": "Paris → Tours",
+        "duration": "≈ 1h15",
+        "duration_hours": 1.25,
+        "price": 24,
+        "reference_price": 50,
+        "direct": True,
+        "type": "TGV",
+        "vibes": ["Ville", "Culture", "Nature"],
+        "appeal": 8,
+        "reason": "Bon compromis entre prix et dépaysement",
+    },
+    {
+        "destination": "La Rochelle",
+        "route": "Paris → La Rochelle",
+        "duration": "≈ 2h45",
+        "duration_hours": 2.75,
+        "price": 49,
+        "reference_price": 100,
+        "direct": True,
+        "type": "TGV",
+        "vibes": ["Mer", "Soleil"],
+        "appeal": 10,
+        "reason": "Le profil parfait pour chercher la mer",
+    },
+    {
+        "destination": "Avignon",
+        "route": "Paris → Avignon",
+        "duration": "≈ 2h40",
+        "duration_hours": 2.67,
+        "price": 59,
+        "reference_price": 120,
+        "direct": True,
+        "type": "TGV",
+        "vibes": ["Soleil", "Culture"],
+        "appeal": 10,
+        "reason": "Beau potentiel de week-end dans le Sud",
+    },
+    {
+        "destination": "Annecy",
+        "route": "Paris → Annecy",
+        "duration": "≈ 3h40",
+        "duration_hours": 3.67,
+        "price": 65,
+        "reference_price": 120,
+        "direct": True,
+        "type": "TGV",
+        "vibes": ["Nature", "Soleil"],
+        "appeal": 10,
+        "reason": "Le dépaysement devient accessible",
+    },
+]
