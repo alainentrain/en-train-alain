@@ -1,0 +1,72 @@
+destination,match,vibe1,vibe2,culture,gastronomie,soleil,nature
+Reims,reims,culture,gastronomie,0.88,0.9,0.35,0.75
+Lille,lille,culture,gastronomie,0.82,0.84,0.35,0.8
+Rouen,rouen,culture,week-end,0.88,0.72,0.3,0.78
+Amiens,amiens,culture,nature,0.75,0.7,0.25,0.75
+Arras,arras,culture,week-end,0.78,0.72,0.3,0.7
+Chantilly,chantilly,nature,culture,0.72,0.62,0.3,0.72
+Compiègne,compiegne,nature,culture,0.72,0.65,0.28,0.72
+Troyes,troyes,culture,gastronomie,0.86,0.82,0.4,0.78
+Dijon,dijon,gastronomie,culture,0.88,0.95,0.4,0.86
+Besançon,besancon,culture,nature,0.8,0.84,0.45,0.82
+Auxerre,auxerre,gastronomie,culture,0.78,0.72,0.3,0.7
+Sens,sens,culture,week-end,0.65,0.58,0.25,0.6
+Orléans,orleans,culture,week-end,0.72,0.68,0.32,0.7
+Tours,tours,culture,gastronomie,0.88,0.84,0.45,0.88
+Blois,blois,culture,week-end,0.88,0.7,0.35,0.82
+Amboise,amboise,culture,gastronomie,0.92,0.82,0.35,0.84
+Châteauroux,chateauroux,week-end,nature,0.55,0.6,0.35,0.55
+Poitiers,poitiers,culture,week-end,0.76,0.72,0.35,0.72
+Angoulême,angouleme,culture,gastronomie,0.82,0.75,0.4,0.72
+La Rochelle,la rochelle,nature,soleil,0.86,0.9,0.82,0.92
+Rochefort,rochefort,nature,soleil,0.72,0.76,0.75,0.68
+Nantes,nantes,culture,gastronomie,0.88,0.84,0.62,0.9
+Angers,angers,culture,nature,0.86,0.82,0.55,0.88
+Le Mans,le mans,culture,week-end,0.72,0.68,0.38,0.78
+Rennes,rennes,culture,gastronomie,0.82,0.78,0.5,0.82
+Saint-Malo,saint malo,soleil,nature,0.82,0.88,0.9,0.9
+Brest,brest,nature,soleil,0.72,0.8,0.82,0.75
+Quimper,quimper,culture,nature,0.84,0.78,0.8,0.76
+Vannes,vannes,nature,soleil,0.82,0.82,0.82,0.8
+Lorient,lorient,soleil,nature,0.62,0.7,0.78,0.68
+Deauville,deauville,soleil,week-end,0.72,0.82,0.78,0.8
+Trouville-sur-Mer,trouville sur mer,soleil,gastronomie,0.75,0.82,0.78,0.78
+Caen,caen,culture,week-end,0.82,0.72,0.55,0.82
+Bayeux,bayeux,culture,week-end,0.92,0.72,0.58,0.78
+Cherbourg,cherbourg,nature,soleil,0.68,0.72,0.72,0.65
+Le Havre,le havre,culture,soleil,0.55,0.65,0.65,0.7
+Strasbourg,strasbourg,culture,gastronomie,0.95,0.94,0.48,0.95
+Colmar,colmar,culture,gastronomie,0.95,0.92,0.55,0.92
+Mulhouse,mulhouse,culture,week-end,0.68,0.72,0.45,0.68
+Metz,metz,culture,gastronomie,0.84,0.82,0.38,0.84
+Nancy,nancy,culture,gastronomie,0.9,0.84,0.35,0.86
+Luxembourg,luxembourg,culture,week-end,0.88,0.78,0.4,0.82
+Châlons-en-Champagne,chalons en champagne,gastronomie,culture,0.68,0.76,0.35,0.65
+Charleville-Mézières,charleville mezieres,nature,culture,0.68,0.66,0.3,0.62
+Sedan,sedan,culture,nature,0.62,0.62,0.25,0.55
+Givet,givet,nature,week-end,0.55,0.6,0.45,0.52
+Clermont-Ferrand,clermont ferrand,nature,culture,0.78,0.78,0.55,0.78
+Vichy,vichy,nature,week-end,0.7,0.72,0.55,0.68
+Saint-Étienne,saint etienne,nature,culture,0.58,0.62,0.42,0.58
+Lyon,lyon,gastronomie,culture,0.92,0.95,0.55,0.95
+Valence,valence,soleil,gastronomie,0.65,0.78,0.72,0.72
+Avignon,avignon,soleil,culture,0.92,0.94,0.88,0.92
+Nîmes,nimes,soleil,culture,0.9,0.92,0.88,0.9
+Montpellier,montpellier,soleil,culture,0.88,0.92,0.9,0.94
+Sète,sete,soleil,gastronomie,0.76,0.82,0.92,0.78
+Arles,arles,soleil,culture,0.9,0.82,0.88,0.84
+Marseille,marseille,soleil,gastronomie,0.88,0.92,0.92,0.94
+Aix-en-Provence,aix en provence,soleil,gastronomie,0.94,0.96,0.9,0.9
+Toulon,toulon,soleil,nature,0.78,0.82,0.92,0.8
+Nice,nice,soleil,gastronomie,0.95,0.96,1.0,0.96
+Cannes,cannes,soleil,gastronomie,0.9,0.94,0.98,0.88
+Grenoble,grenoble,nature,culture,0.82,0.76,0.65,0.8
+Annecy,annecy,nature,soleil,0.98,0.92,0.88,0.94
+Chambéry,chambery,nature,gastronomie,0.9,0.82,0.78,0.82
+Genève,geneve,week-end,gastronomie,0.88,0.84,0.78,0.88
+Bâle,bale,culture,gastronomie,0.8,0.82,0.6,0.8
+Lausanne,lausanne,nature,culture,0.88,0.86,0.72,0.82
+Bruxelles,bruxelles,culture,gastronomie,0.92,0.92,0.55,0.94
+Londres,londres,culture,gastronomie,0.98,0.95,0.55,0.92
+Amsterdam,amsterdam,culture,week-end,0.98,0.95,0.55,0.94
+Barcelone,barcelone,soleil,culture,0.98,0.98,1.0,0.98
