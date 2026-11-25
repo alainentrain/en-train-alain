@@ -1,26 +1,20 @@
 # En Train Alain — V12
 
-V12 améliore le moteur d'escapade à partir de V10.
+Base officielle : V10, avec la logique de correspondances de V11 conservée puis corrigée.
 
-- horaires SNCF réels issus du GTFS ;
-- trajets directs ;
-- trajets à 1 correspondance ;
-- gare de départ réelle affichée ;
-- gare de correspondance et horaires des deux tronçons affichés ;
-- temps de correspondance contrôlé ;
-- allers et retours recherchés indépendamment ;
-- classement des destinations privilégiant la qualité de l'escapade ;
-- moins de dépendance à un quota artificiel de 30 résultats.
+## V12
+- Les trajets directs sont toujours prioritaires.
+- Une correspondance n'est proposée que lorsqu'aucun trajet direct n'existe vers la destination.
+- Les faux détours du type Paris → Longueau → Amiens alors qu'un direct existe sont éliminés.
+- Les correspondances affichent désormais clairement la gare de correspondance et le parcours.
+- Les points d'arrêt routiers/cars sont exclus du MVP ferroviaire, notamment « Paris-Austerlitz Routiere ».
+- Les 4 premiers horaires sont visibles et les suivants sont accessibles via « Autres horaires disponibles ».
+- Allers et retours restent indépendants : aucune combinaison A/R n'est imposée.
 
 ## Données
-
-Conserver le dossier `data/` déjà présent dans le projet GitHub.
-
-## Installation
-
-```bash
-pip install -r requirements.txt
-streamlit run app.py
-```
-
-Les prix restent des tarifs indicatifs de référence tant que l'API commerciale n'est pas intégrée.
+Conserver dans `data/` les 5 fichiers SNCF déjà utilisés :
+- `stations.csv`
+- `routes.csv`
+- `calendar_dates.csv`
+- `trip_stops.csv.gz`
+- `tarifs-tgv-inoui-ouigo.csv`

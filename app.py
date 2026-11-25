@@ -131,14 +131,18 @@ def station_options(stations):
 
 
 def station_ids_for_choice(choice, stations):
+    road_mask = stations["station_name"].astype(str).str.contains(
+        r"routière|routiere|car", case=False, na=False
+    )
+
     if choice == "Paris (toutes les gares)":
-        # On prend uniquement les gares dont le nom commence par Paris.
         mask = stations["station_name"].astype(str).str.match(
             r"^Paris\b", case=False, na=False
-        )
+        ) & ~road_mask
         return set(stations.loc[mask, "station_id"])
 
-    return set(stations.loc[stations["station_name"] == choice, "station_id"])
+    mask = (stations["station_name"] == choice) & ~road_mask
+    return set(stations.loc[mask, "station_id"])
 
 
 def haversine_km(lat1, lon1, lat2, lon2):
@@ -218,7 +222,6 @@ def direct_journeys(
     if origin.empty:
         return pd.DataFrame()
 
-    # On ne garde que les trips qui partent bien de l'origine.
     trip_ids = origin["trip_id"].unique()
 
     downstream_cols = [
@@ -230,8 +233,8 @@ def direct_journeys(
         "trip_headsign",
     ]
 
-    downstream = trips[
-        trips["trip_id"].isin(trip_ids)
+    downstream = rail[
+        rail["trip_id"].isin(trip_ids)
     ][downstream_cols].copy()
 
     origins = origin[
@@ -250,12 +253,7 @@ def direct_journeys(
         }
     )
 
-    downstream = downstream.merge(
-        origins,
-        on="trip_id",
-        how="inner",
-    )
-
+    downstream = downstream.merge(origins, on="trip_id", how="inner")
     downstream["arr_min"] = downstream["arrival_time"].map(parse_gtfs_time)
 
     downstream = downstream[
@@ -269,23 +267,19 @@ def direct_journeys(
             downstream["station_id"].isin(destination_ids)
         ]
 
-    downstream["duration"] = (
-        downstream["arr_min"] - downstream["dep_min"]
-    )
-
+    downstream["duration"] = downstream["arr_min"] - downstream["dep_min"]
     downstream = downstream[
         (downstream["duration"] > 0)
         & (downstream["duration"] <= max_duration)
     ]
 
-    # Un seul passage par train + destination.
     downstream = (
         downstream
         .sort_values(["trip_id", "station_id", "arr_min"])
         .drop_duplicates(["trip_id", "station_id"])
     )
 
-    return downstream[
+    result = downstream[
         [
             "trip_id",
             "station_id",
@@ -298,15 +292,10 @@ def direct_journeys(
             "trip_headsign",
             "duration",
         ]
-    ].rename(
-        columns={"origin_departure_time": "departure_time"}
-    )
+    ].rename(columns={"origin_departure_time": "departure_time"})
+    result["connections"] = 0
+    return result
 
-
-
-# ------------------------------------------------------------
-# Recherche de trajets à 1 correspondance
-# ------------------------------------------------------------
 
 def one_connection_journeys(
     trips,
@@ -316,238 +305,168 @@ def one_connection_journeys(
     dep_start=300,
     dep_end=1380,
     max_duration=600,
-    min_change=8,
-    max_change=45,
-    max_first_trips=160,
-    max_transfer_stops_per_trip=10,
-    max_second_trips_per_transfer=4,
+    min_transfer=8,
+    max_transfer=90,
+    max_candidates=120,
 ):
-    """Cherche des trajets à exactement 1 correspondance.
-
-    Retourne les deux tronçons complets pour permettre un affichage
-    compréhensible : départ -> correspondance -> arrivée.
     """
-    rail = rail_rows(trips, services).copy()
-    if rail.empty:
+    Recherche de trajets avec exactement une correspondance.
+
+    Important : cette fonction ne fabrique pas de combinaison aller/retour.
+    Elle produit simplement des possibilités de trajet dans UN sens.
+    Pour limiter le coût, on ne cherche les correspondances que si
+    la recherche directe ne suffit pas.
+    """
+    rail = rail_rows(trips, services)
+
+    first = rail[rail["station_id"].isin(origin_ids)].copy()
+    if first.empty:
         return pd.DataFrame()
 
-    rail["dep_min"] = rail["departure_time"].map(parse_gtfs_time)
-    rail["arr_min"] = rail["arrival_time"].map(parse_gtfs_time)
-    rail = rail[rail["dep_min"].notna() | rail["arr_min"].notna()].copy()
-
-    # 1) Premiers trains au départ.
-    first = rail[
-        rail["station_id"].isin(origin_ids)
-        & rail["dep_min"].between(dep_start, dep_end)
-        & rail["dep_min"].notna()
+    first["dep_min"] = first["departure_time"].map(parse_gtfs_time)
+    first = first[
+        first["dep_min"].between(dep_start, dep_end)
+        & first["dep_min"].notna()
     ].copy()
 
     if first.empty:
         return pd.DataFrame()
 
-    # On garde un nombre raisonnable de départs répartis dans la journée.
-    first = (
-        first.sort_values(["dep_min", "trip_id", "stop_sequence"])
-        .drop_duplicates(["trip_id", "station_id", "dep_min"])
-    )
-    if len(first) > max_first_trips:
-        idx = np.linspace(0, len(first) - 1, max_first_trips).astype(int)
-        first = first.iloc[np.unique(idx)].copy()
+    # Index des départs par gare : permet de trouver rapidement
+    # le prochain train après une arrivée de correspondance.
+    dep_idx = rail[
+        ["trip_id", "station_id", "station_name", "stop_sequence",
+         "departure_time", "trip_headsign"]
+    ].copy()
+    dep_idx["dep_min"] = dep_idx["departure_time"].map(parse_gtfs_time)
+    dep_idx = dep_idx[dep_idx["dep_min"].notna()].copy()
 
-    # 2) Tous les arrêts suivants de ces premiers trains = points de correspondance possibles.
-    first_origins = first[
+    # Pour chaque gare, les départs sont triés afin d'utiliser searchsorted.
+    dep_groups = {}
+    for sid, g in dep_idx.groupby("station_id", sort=False):
+        dep_groups[sid] = g.sort_values("dep_min")
+
+    # Stops de chaque premier train après son départ de l'origine.
+    first_ids = first["trip_id"].unique()
+    first_stops = rail[rail["trip_id"].isin(first_ids)].copy()
+    first_stops["arr_min"] = first_stops["arrival_time"].map(parse_gtfs_time)
+    first_stops = first_stops[
+        first_stops["arr_min"].notna()
+        & first_stops["station_id"].notna()
+    ]
+
+    origins = first[
         ["trip_id", "station_id", "stop_sequence", "dep_min", "departure_time"]
     ].rename(
         columns={
             "station_id": "origin_station_id",
             "stop_sequence": "origin_seq",
-            "dep_min": "origin_dep_min",
             "departure_time": "origin_departure_time",
         }
     )
-
-    first_stops = rail[
-        rail["trip_id"].isin(first["trip_id"].unique())
-    ][
-        [
-            "trip_id", "station_id", "station_name", "stop_sequence",
-            "arrival_time", "arr_min", "trip_headsign"
-        ]
-    ].merge(first_origins, on="trip_id", how="inner")
-
+    first_stops = first_stops.merge(origins, on="trip_id", how="inner")
     first_stops = first_stops[
-        (first_stops["stop_sequence"] > first_stops["origin_seq"])
-        & first_stops["arr_min"].notna()
-        & (first_stops["station_id"] != first_stops["origin_station_id"])
-    ].copy()
+        first_stops["stop_sequence"] > first_stops["origin_seq"]
+    ]
 
-    if first_stops.empty:
-        return pd.DataFrame()
-
-    # Pour éviter des correspondances absurdes très loin sur le premier train,
-    # on ne considère que les premiers points de correspondance de chaque train.
-    first_stops = (
-        first_stops.sort_values(
-            ["trip_id", "stop_sequence"]
-        )
-        .groupby("trip_id", sort=False)
-        .head(max_transfer_stops_per_trip)
+    # Ne garder qu'un nombre raisonnable de trains de départ pour
+    # empêcher une recherche massive inutile.
+    first = (
+        first.sort_values(["dep_min", "trip_id"])
+        .drop_duplicates(["trip_id"])
+        .head(max_candidates)
     )
+    first_ids = set(first["trip_id"])
+    first_stops = first_stops[first_stops["trip_id"].isin(first_ids)]
 
-    # 3) Index des départs par gare de correspondance.
-    second = rail[
-        rail["dep_min"].notna()
-    ][
-        [
-            "trip_id", "station_id", "station_name", "stop_sequence",
-            "departure_time", "dep_min", "trip_headsign"
-        ]
-    ].copy()
+    results = []
 
-    second = second.sort_values(["station_id", "dep_min", "trip_id"])
-    dep_index = {}
-    for sid, g in second.groupby("station_id", sort=False):
-        dep_index[sid] = (
-            g["dep_min"].to_numpy(),
-            g.index.to_numpy(),
-        )
+    for _, leg1 in first_stops.iterrows():
+        transfer_station = leg1["station_id"]
+        arrival1 = float(leg1["arr_min"])
+        first_departure = float(leg1["dep_min"])
 
-    # Index des arrêts par train : évite de refaire rail[rail.trip_id == ...]
-    # des milliers de fois.
-    trip_rows = {
-        tid: g
-        for tid, g in rail.groupby("trip_id", sort=False)
-    }
-
-    destination_set = set(destination_ids) if destination_ids is not None else None
-    candidates = []
-
-    for row in first_stops.itertuples(index=False):
-        idx_data = dep_index.get(row.station_id)
-        if idx_data is None:
+        g = dep_groups.get(transfer_station)
+        if g is None or g.empty:
             continue
 
-        dep_values, dep_indices = idx_data
+        lo = arrival1 + min_transfer
+        hi = arrival1 + max_transfer
+        vals = g["dep_min"].to_numpy()
 
-        lo = np.searchsorted(
-            dep_values,
-            float(row.arr_min) + min_change,
-            side="left",
-        )
-        hi = np.searchsorted(
-            dep_values,
-            float(row.arr_min) + max_change,
-            side="right",
-        )
+        left = int(np.searchsorted(vals, lo, side="left"))
+        right = int(np.searchsorted(vals, hi, side="right"))
 
-        if hi <= lo:
-            continue
+        candidates = g.iloc[left:right]
 
-        # Quelques deuxièmes trains suffisent pour découvrir les possibilités
-        # sans transformer la recherche en générateur combinatoire.
-        for pos in range(lo, min(hi, lo + max_second_trips_per_transfer)):
-            sec_idx = dep_indices[pos]
-            sec = second.loc[sec_idx]
-
-            if str(sec["trip_id"]) == str(row.trip_id):
+        for _, leg2 in candidates.head(8).iterrows():
+            # Ne pas reprendre le même train.
+            if str(leg2["trip_id"]) == str(leg1["trip_id"]):
                 continue
 
-            sec_trip = trip_rows.get(sec["trip_id"])
-            if sec_trip is None:
+            # La destination doit être après le départ de la correspondance.
+            trip2 = rail[rail["trip_id"] == leg2["trip_id"]]
+            if trip2.empty:
                 continue
 
-            dests = sec_trip[
-                (sec_trip["stop_sequence"] > sec["stop_sequence"])
-                & sec_trip["arr_min"].notna()
+            trip2 = trip2[
+                trip2["stop_sequence"] > float(leg2["stop_sequence"])
             ].copy()
-
-            if destination_set is not None:
-                dests = dests[dests["station_id"].isin(destination_set)]
-
-            if dests.empty:
+            if trip2.empty:
                 continue
 
-            dests = (
-                dests.sort_values(["station_id", "arr_min"])
-                .drop_duplicates(["station_id"])
+            trip2["arr_min"] = trip2["arrival_time"].map(parse_gtfs_time)
+            trip2 = trip2[trip2["arr_min"].notna()]
+
+            if destination_ids is not None:
+                trip2 = trip2[trip2["station_id"].isin(destination_ids)]
+
+            if trip2.empty:
+                continue
+
+            trip2["total_duration"] = (
+                trip2["arr_min"] - first_departure
             )
-
-            for dest in dests.itertuples(index=False):
-                total = float(dest.arr_min) - float(row.origin_dep_min)
-
-                if total <= 0 or total > max_duration:
-                    continue
-
-                candidates.append(
-                    {
-                        "trip_id": f"{row.trip_id}__{sec['trip_id']}",
-                        "station_id": str(dest.station_id),
-                        "station_name": str(dest.station_name),
-                        "dep_min": float(row.origin_dep_min),
-                        "arr_min": float(dest.arr_min),
-                        "origin_station_id": str(row.origin_station_id),
-                        "departure_time": row.origin_departure_time,
-                        "arrival_time": dest.arrival_time,
-                        "duration": total,
-                        "trip_headsign": f"{row.trip_headsign} / {sec['trip_headsign']}",
-                        "journey_type": "1 correspondance",
-                        "transfer_station_id": str(row.station_id),
-                        "transfer_station_name": str(row.station_name),
-                        "transfer_arr_min": float(row.arr_min),
-                        "transfer_dep_min": float(sec["dep_min"]),
-                        "change_duration": float(sec["dep_min"] - row.arr_min),
-                        "first_leg_trip_id": str(row.trip_id),
-                        "second_leg_trip_id": str(sec["trip_id"]),
-                        "first_leg_departure_time": row.origin_departure_time,
-                        "first_leg_arrival_time": row.arrival_time,
-                        "second_leg_departure_time": sec["departure_time"],
-                        "second_leg_arrival_time": dest.arrival_time,
-                    }
-                )
-
-    if not candidates:
-        return pd.DataFrame()
-
-    out = pd.DataFrame(candidates)
-
-    # On évite les doublons et les variantes moins bonnes.
-    out = (
-        out.sort_values(
-            ["station_id", "duration", "change_duration", "dep_min"]
-        )
-        .drop_duplicates(
-            [
-                "origin_station_id",
-                "station_id",
-                "dep_min",
-                "transfer_station_id",
-                "transfer_dep_min",
-                "arr_min",
+            trip2 = trip2[
+                (trip2["total_duration"] > 0)
+                & (trip2["total_duration"] <= max_duration)
             ]
-        )
-    )
 
-    return out
+            if trip2.empty:
+                continue
 
+            for _, final in trip2.sort_values("arr_min").head(3).iterrows():
+                results.append({
+                    "trip_id": f"{leg1['trip_id']}__{leg2['trip_id']}",
+                    "station_id": final["station_id"],
+                    "station_name": final["station_name"],
+                    "departure_time": leg1["origin_departure_time"],
+                    "arrival_time": final["arrival_time"],
+                    "dep_min": first_departure,
+                    "arr_min": float(final["arr_min"]),
+                    "origin_station_id": leg1["origin_station_id"],
+                    "trip_headsign": (
+                        f"{leg1['trip_headsign']} / {leg2['trip_headsign']}"
+                    ),
+                    "duration": float(final["total_duration"]),
+                    "transfer_station_id": transfer_station,
+                    "transfer_station_name": str(leg1["station_name"]),
+                    "transfer_departure": leg2["departure_time"],
+                    "transfer_arrival": leg1["arrival_time"],
+                    "connections": 1,
+                })
 
-def merge_journey_types(direct, connections):
-    frames = []
-
-    if direct is not None and not direct.empty:
-        d = direct.copy()
-        d["journey_type"] = "direct"
-        d["change_duration"] = np.nan
-        d["transfer_station_id"] = ""
-        d["transfer_station_name"] = ""
-        frames.append(d)
-
-    if connections is not None and not connections.empty:
-        frames.append(connections.copy())
-
-    if not frames:
+    if not results:
         return pd.DataFrame()
 
-    return pd.concat(frames, ignore_index=True, sort=False)
+    out = pd.DataFrame(results)
+
+    # Élimination des doublons d'affichage.
+    return (
+        out
+        .sort_values(["station_id", "dep_min", "arr_min"])
+        .drop_duplicates(["station_id", "dep_min", "arr_min"])
+    )
 
 
 # ------------------------------------------------------------
@@ -602,7 +521,7 @@ if not fares.empty:
 
 st.title("🚆 En Train Alain")
 st.caption(
-    "Tu as un budget, on cherche où partir. — V12 : trajets directs + correspondances qualitatives"
+    "Tu as un budget, on cherche où partir. — V12 : allers, retours et correspondances mieux interprétées"
 )
 
 with st.sidebar:
@@ -683,7 +602,7 @@ with st.sidebar:
 st.markdown("### Où peux-tu partir ?")
 
 st.info(
-    "Cette version utilise les horaires SNCF réels. "
+    "Cette version utilise les horaires SNCF réels et ne propose une correspondance que lorsqu'aucun trajet direct n'existe pour la destination. "
     "Les prix affichés quand disponibles sont des **tarifs indicatifs de référence**, "
     "pas le prix en temps réel. "
     "**Les allers et les retours sont affichés séparément : "
@@ -720,19 +639,26 @@ if search:
         st.stop()
 
     if not out_services:
-        st.warning("Aucun service SNCF n'est renseigné pour cette date aller dans le fichier GTFS.")
+        st.warning(
+            "Aucun service SNCF n'est renseigné pour cette date aller dans le fichier GTFS."
+        )
         st.stop()
 
     if not in_services:
-        st.warning("Aucun service SNCF n'est renseigné pour cette date retour dans le fichier GTFS.")
+        st.warning(
+            "Aucun service SNCF n'est renseigné pour cette date retour dans le fichier GTFS."
+        )
         st.stop()
 
     with st.spinner("Recherche des destinations réelles…"):
 
         # ====================================================
-        # 1. DIRECTS ALLER
+        # 1. ALLERS DISPONIBLES
         # ====================================================
 
+        # V11 : les directs restent prioritaires.
+        # Les correspondances servent uniquement à élargir la découverte
+        # lorsqu'il n'y a pas assez de destinations directes.
         outbound_direct = direct_journeys(
             trips,
             out_services,
@@ -742,171 +668,161 @@ if search:
             max_duration=max_duration,
         )
 
-        # ====================================================
-        # 2. DIRECTS RETOUR
-        # ====================================================
-
-        # On commence par les destinations trouvées en direct à l'aller.
-        # Puis les correspondances élargiront l'univers si nécessaire.
-        direct_destinations = (
-            set(outbound_direct["station_id"])
-            if not outbound_direct.empty else set()
-        )
-
-        return_direct = direct_journeys(
-            trips,
-            in_services,
-            direct_destinations if direct_destinations else set(),
-            destination_ids=origin_ids,
-            dep_start=300,
-            dep_end=1500,
-            max_duration=max_duration,
-        ) if direct_destinations else pd.DataFrame()
-
-        # ====================================================
-        # 3. CORRESPONDANCES ALLER
-        # ====================================================
-
-        outbound_conn = one_connection_journeys(
-            trips,
-            out_services,
-            origin_ids,
-            destination_ids=None,
-            dep_start=dep_start,
-            dep_end=dep_end,
-            max_duration=max_duration,
-        )
-
-        # Exclusion proximité avant de construire les retours.
-        def keep_destination(df, destination_col="station_id"):
-            if df.empty:
-                return df
-            return df[
-                ~df[destination_col].map(
-                    lambda x: is_suburban_or_idf_station(x, station_lookup)
-                )
-            ].copy()
-
-        outbound_direct = keep_destination(outbound_direct, "station_id")
-        outbound_conn = keep_destination(outbound_conn, "station_id")
-        return_direct = (
-            return_direct[
-                ~return_direct["origin_station_id"].map(
-                    lambda x: is_suburban_or_idf_station(x, station_lookup)
-                )
-            ].copy()
-            if not return_direct.empty else return_direct
-        )
-
-        outbound_candidates = pd.concat(
-            [outbound_direct, outbound_conn],
-            ignore_index=True,
-            sort=False,
-        ) if not outbound_conn.empty or not outbound_direct.empty else pd.DataFrame()
-
-        # ====================================================
-        # 4. CORRESPONDANCES RETOUR
-        # ====================================================
-
-        candidate_destinations = (
-            set(outbound_candidates["station_id"])
-            if not outbound_candidates.empty else set()
-        )
-
-        # On cherche les retours directs supplémentaires pour les destinations
-        # accessibles uniquement avec correspondance à l'aller.
-        if candidate_destinations:
-            missing_direct_return = direct_journeys(
+        if outbound_direct.empty or outbound_direct["station_id"].nunique() < 30:
+            outbound_connections = one_connection_journeys(
                 trips,
-                in_services,
-                candidate_destinations,
-                destination_ids=origin_ids,
-                dep_start=300,
-                dep_end=1500,
+                out_services,
+                origin_ids,
+                dep_start=dep_start,
+                dep_end=dep_end,
                 max_duration=max_duration,
             )
         else:
-            missing_direct_return = pd.DataFrame()
+            outbound_connections = pd.DataFrame()
 
-        missing_direct_return = (
-            missing_direct_return[
-                ~missing_direct_return["origin_station_id"].map(
-                    lambda x: is_suburban_or_idf_station(x, station_lookup)
-                )
+        # Une correspondance n'est ajoutée que pour une destination
+        # qui ne possède AUCUN trajet direct. Cela élimine les faux détours
+        # du type Paris → Longueau → Amiens lorsqu'un direct existe.
+        if not outbound_connections.empty and not outbound_direct.empty:
+            direct_destinations = set(outbound_direct["station_id"])
+            outbound_connections = outbound_connections[
+                ~outbound_connections["station_id"].isin(direct_destinations)
             ].copy()
-            if not missing_direct_return.empty else missing_direct_return
-        )
 
-        return_direct = pd.concat(
-            [return_direct, missing_direct_return],
+        outbound_all = pd.concat(
+            [outbound_direct, outbound_connections],
             ignore_index=True,
-            sort=False,
-        ) if not missing_direct_return.empty else return_direct
+        ) if not outbound_connections.empty else outbound_direct
 
-        # Correspondance retour pour les destinations sans retour direct.
-        direct_return_destinations = (
-            set(return_direct["origin_station_id"])
-            if not return_direct.empty else set()
+        # ====================================================
+        # 2. RETOURS DISPONIBLES
+        # ====================================================
+
+        # Même principe dans l'autre sens : les retours restent indépendants
+        # des allers. On ne construit aucune combinaison A/R ici.
+        return_all = pd.DataFrame()
+
+        if not outbound_all.empty:
+            possible_destination_ids = set(
+                outbound_all["station_id"]
+            )
+
+            return_direct = direct_journeys(
+                trips,
+                in_services,
+                possible_destination_ids,
+                destination_ids=origin_ids,
+                dep_start=600,
+                dep_end=1500,
+                max_duration=max_duration,
+            )
+
+            if return_direct.empty or return_direct["origin_station_id"].nunique() < 30:
+                return_connections = one_connection_journeys(
+                    trips,
+                    in_services,
+                    possible_destination_ids,
+                    destination_ids=origin_ids,
+                    dep_start=600,
+                    dep_end=1500,
+                    max_duration=max_duration,
+                )
+            else:
+                return_connections = pd.DataFrame()
+
+            # Même règle au retour : un détour n'est jamais affiché
+            # lorsqu'un retour direct existe déjà pour cette destination.
+            if not return_connections.empty and not return_direct.empty:
+                direct_return_destinations = set(return_direct["origin_station_id"])
+                return_connections = return_connections[
+                    ~return_connections["origin_station_id"].isin(direct_return_destinations)
+                ].copy()
+
+            if not return_connections.empty:
+                return_all = pd.concat(
+                    [return_direct, return_connections],
+                    ignore_index=True,
+                )
+            else:
+                return_all = return_direct
+
+        # ====================================================
+        # 3. NETTOYAGE DES POINTS ROUTIERS + PROXIMITÉ
+        # ====================================================
+
+        # Le MVP est ferroviaire : on exclut les arrêts routiers/cars
+        # (ex. « Paris-Austerlitz Routiere ») même s'ils apparaissent
+        # dans le flux SNCF.
+        road_station_ids = set(
+            stations.loc[
+                stations["station_name"].astype(str).str.contains(
+                    r"routière|routiere|car", case=False, na=False
+                ),
+                "station_id",
+            ]
         )
-        need_return_conn = candidate_destinations - direct_return_destinations
 
-        return_conn = one_connection_journeys(
-            trips,
-            in_services,
-            need_return_conn,
-            destination_ids=origin_ids,
-            dep_start=300,
-            dep_end=1500,
-            max_duration=max_duration,
-        ) if need_return_conn else pd.DataFrame()
+        if not outbound_all.empty:
+            outbound_all = outbound_all[
+                ~outbound_all["station_id"].isin(road_station_ids)
+            ].copy()
 
-        if not return_conn.empty:
-            return_conn = return_conn[
-                ~return_conn["origin_station_id"].map(
+        if not return_all.empty:
+            return_all = return_all[
+                ~return_all["origin_station_id"].isin(road_station_ids)
+            ].copy()
+
+        # Puis on évite les destinations de proximité typiquement
+        # assimilables à un trajet RER / Transilien.
+        if not outbound_all.empty:
+            outbound_all = outbound_all[
+                ~outbound_all["station_id"].map(
                     lambda x: is_suburban_or_idf_station(x, station_lookup)
                 )
             ].copy()
 
-        return_all = merge_journey_types(
-            return_direct,
-            return_conn,
-        )
-        outbound_all = merge_journey_types(
-            outbound_direct,
-            outbound_conn,
-        )
+        if not return_all.empty:
+            return_all = return_all[
+                ~return_all["origin_station_id"].map(
+                    lambda x: is_suburban_or_idf_station(x, station_lookup)
+                )
+            ].copy()
 
-        # ====================================================
-        # 5. DESTINATIONS AVEC ALLER + RETOUR
-        # ====================================================
+        # On ne garde que les destinations pour lesquelles
+        # un aller ET au moins un retour existent.
+        outbound_destinations = set(
+            outbound_all["station_id"]
+        ) if not outbound_all.empty else set()
 
-        outbound_destinations = (
-            set(outbound_all["station_id"])
-            if not outbound_all.empty else set()
+        return_destinations = set(
+            return_all["origin_station_id"]
+        ) if not return_all.empty else set()
+
+        common_destinations = (
+            outbound_destinations & return_destinations
         )
-        return_destinations = (
-            set(return_all["origin_station_id"])
-            if not return_all.empty else set()
-        )
-
-        common_destinations = outbound_destinations & return_destinations
-
-        if not common_destinations:
-            st.warning(
-                "Aucune destination avec un aller et un retour exploitables "
-                "ne correspond à ces critères."
-            )
-            st.stop()
 
         outbound_all = outbound_all[
             outbound_all["station_id"].isin(common_destinations)
         ].copy()
+
         return_all = return_all[
             return_all["origin_station_id"].isin(common_destinations)
         ].copy()
 
+        if not common_destinations:
+            st.warning(
+                "Aucune destination avec un aller et un retour direct ne correspond "
+                "à ces critères."
+            )
+            st.caption(
+                "Les trajets sont recherchés séparément : l'application ne tente "
+                "pas de fabriquer une paire précise aller + retour."
+            )
+            st.stop()
+
         # ====================================================
-        # 6. SCORE DE PERTINENCE
+        # 4. UNE CARTE PAR DESTINATION
         # ====================================================
 
         destination_rows = []
@@ -915,35 +831,27 @@ if search:
 
             out = outbound_all[
                 outbound_all["station_id"] == station_id
-            ].copy()
+            ].sort_values(["dep_min", "duration"])
 
             ret = return_all[
                 return_all["origin_station_id"] == station_id
-            ].copy()
+            ].sort_values(["dep_min", "duration"])
 
             if out.empty or ret.empty:
                 continue
 
-            # Meilleur trajet pour évaluer la destination :
-            # direct prioritaire, mais une correspondance correcte reste admissible.
-            out["_connection_penalty"] = out["journey_type"].map(
-                {"direct": 0, "1 correspondance": 10}
-            ).fillna(20)
-            ret["_connection_penalty"] = ret["journey_type"].map(
-                {"direct": 0, "1 correspondance": 10}
-            ).fillna(20)
+            # Pour le score, on utilise le meilleur aller et le meilleur retour.
+            best_out = out.sort_values(
+                ["duration", "dep_min"]
+            ).iloc[0]
 
-            out = out.sort_values(
-                ["_connection_penalty", "duration", "change_duration", "dep_min"]
+            best_ret = ret.sort_values(
+                ["duration", "dep_min"]
+            ).iloc[0]
+
+            station_name = str(
+                best_out["station_name"]
             )
-            ret = ret.sort_values(
-                ["_connection_penalty", "duration", "change_duration", "dep_min"]
-            )
-
-            best_out = out.iloc[0]
-            best_ret = ret.iloc[0]
-
-            station_name = str(best_out["station_name"])
 
             fare_min = fare_lookup(
                 fares,
@@ -957,38 +865,15 @@ if search:
                 else np.nan
             )
 
-            # Qualité temporelle de l'escapade.
-            total_travel = float(best_out["duration"]) + float(best_ret["duration"])
+            # Score = indication de potentiel, pas promesse de prix réel.
             time_score = np.clip(
-                1 - total_travel / (max_duration * 2),
+                1 - (
+                    float(best_out["duration"])
+                    + float(best_ret["duration"])
+                ) / (max_duration * 2),
                 0,
                 1,
             )
-
-            # Régularité de l'offre : plusieurs horaires = plus de liberté.
-            option_score = np.clip(
-                (min(len(out), 8) + min(len(ret), 8)) / 16,
-                0,
-                1,
-            )
-
-            # Une correspondance pénalise la destination, mais pas au point
-            # de l'éliminer automatiquement.
-            connection_penalty = 0
-            if best_out["journey_type"] == "1 correspondance":
-                connection_penalty += 7
-            if best_ret["journey_type"] == "1 correspondance":
-                connection_penalty += 7
-
-            if pd.notna(best_out.get("change_duration", np.nan)):
-                wait = float(best_out["change_duration"])
-                if wait > 35:
-                    connection_penalty += min(5, (wait - 35) / 5)
-
-            if pd.notna(best_ret.get("change_duration", np.nan)):
-                wait = float(best_ret["change_duration"])
-                if wait > 35:
-                    connection_penalty += min(5, (wait - 35) / 5)
 
             if pd.notna(fare_ar):
                 budget_score = np.clip(
@@ -997,35 +882,33 @@ if search:
                     1,
                 )
             else:
-                # On ne prétend pas connaître le prix réel.
                 budget_score = 0.5
 
             schedule_score = np.clip(
-                1 - abs(float(best_out["dep_min"]) - 510) / 600,
+                1 - abs(
+                    float(best_out["dep_min"]) - 510
+                ) / 600,
                 0,
                 1,
             )
 
             score = (
-                0.42 * budget_score
-                + 0.30 * time_score
-                + 0.16 * option_score
-                + 0.12 * schedule_score
-            ) * 100 - connection_penalty
+                0.45 * budget_score
+                + 0.35 * time_score
+                + 0.20 * schedule_score
+            ) * 100
 
             destination_rows.append(
                 {
                     "station_id": station_id,
                     "station_name": station_name,
-                    "out": out.drop(columns=["_connection_penalty"]),
-                    "ret": ret.drop(columns=["_connection_penalty"]),
+                    "out": out,
+                    "ret": ret,
                     "fare_ar": fare_ar,
                     "score": score,
                     "distance_km": station_lookup.loc[
                         station_id, "_distance_paris_km"
                     ],
-                    "best_out_type": best_out["journey_type"],
-                    "best_ret_type": best_ret["journey_type"],
                 }
             )
 
@@ -1043,47 +926,33 @@ if search:
             ascending=[False, True],
         ).head(30)
 
-        direct_count = sum(
-            1
-            for _, r in results.iterrows()
-            if r["best_out_type"] == "direct"
-            and r["best_ret_type"] == "direct"
-        )
-
         st.success(
-            f"{len(results)} destinations pertinentes trouvées."
+            f"{len(results)} destinations avec des allers et des retours disponibles."
         )
 
         st.caption(
-            f"Allers : {len(outbound_all)} options · "
-            f"Retours : {len(return_all)} options · "
-            f"{direct_count}/{len(results)} destinations avec direct recommandé "
-            f"dans les deux sens."
+            f"Services actifs : {len(out_services)} à l'aller · "
+            f"{len(in_services)} au retour · "
+            f"{len(results)} destinations affichées"
         )
 
         # ====================================================
-        # 7. AFFICHAGE
+        # 5. AFFICHAGE
         # ====================================================
 
         for _, r in results.iterrows():
 
-            out = (
-                r["out"]
-                .sort_values(["dep_min", "duration"])
-                .drop_duplicates(
-                    ["dep_min", "arr_min", "transfer_station_id"]
-                )
-                .head(8)
-            )
+            out = r["out"].sort_values(
+                ["dep_min", "duration"]
+            ).drop_duplicates(
+                ["dep_min", "arr_min"]
+            ).head(8)
 
-            ret = (
-                r["ret"]
-                .sort_values(["dep_min", "duration"])
-                .drop_duplicates(
-                    ["dep_min", "arr_min", "transfer_station_id"]
-                )
-                .head(8)
-            )
+            ret = r["ret"].sort_values(
+                ["dep_min", "duration"]
+            ).drop_duplicates(
+                ["dep_min", "arr_min"]
+            ).head(8)
 
             fare_text = (
                 f"≈ {r['fare_ar']:.0f} € A/R de référence"
@@ -1096,7 +965,6 @@ if search:
                 c1, c2 = st.columns([3, 1])
 
                 with c1:
-
                     st.subheader(
                         str(r["station_name"]).title()
                     )
@@ -1107,112 +975,67 @@ if search:
                         f"score {r['score']:.0f}/100"
                     )
 
-                    st.markdown(
-                        "🚆 **Allers disponibles**"
-                    )
+                    st.markdown("🚆 **Allers disponibles**")
 
-                    out_lines = []
+                    def journey_label(x):
+                        conn = int(x.get("connections", 0))
+                        if conn == 0:
+                            return "direct"
+                        transfer = str(x.get("transfer_station_name", "")).strip()
+                        return (
+                            f"1 correspondance à {transfer}"
+                            if transfer and transfer != "nan"
+                            else "1 correspondance"
+                        )
 
-                    for _, x in out.iterrows():
-
-                        if x["journey_type"] == "direct":
-
-                            line = (
-                                f"- **{fmt_time(x['dep_min'])} → "
-                                f"{fmt_time(x['arr_min'])}** · "
-                                f"{fmt_duration(x['duration'])} · "
-                                f"direct · départ **{x['origin_station_id']}**"
+                    def journey_route(x, destination):
+                        try:
+                            origin_name = str(
+                                station_lookup.loc[x["origin_station_id"], "station_name"]
                             )
+                        except Exception:
+                            origin_name = str(x.get("origin_station_id", ""))
+                        if int(x.get("connections", 0)) == 0:
+                            return f"{origin_name} → {destination}"
+                        transfer = str(x.get("transfer_station_name", "")).strip()
+                        return f"{origin_name} → {transfer} → {destination}"
 
-                            # Remplace l'ID par le nom si possible.
-                            try:
-                                dep_name = station_lookup.loc[
-                                    x["origin_station_id"], "station_name"
-                                ]
-                                line = (
-                                    f"- **{fmt_time(x['dep_min'])} → "
-                                    f"{fmt_time(x['arr_min'])}** · "
-                                    f"{fmt_duration(x['duration'])} · direct · "
-                                    f"🚉 {dep_name}"
-                                )
-                            except Exception:
-                                pass
-
-                        else:
-
-                            try:
-                                dep_name = station_lookup.loc[
-                                    x["origin_station_id"], "station_name"
-                                ]
-                            except Exception:
-                                dep_name = x["origin_station_id"]
-
-                            line = (
-                                f"- **{fmt_time(x['dep_min'])} → "
-                                f"{fmt_time(x['arr_min'])}** · "
-                                f"{fmt_duration(x['duration'])} · "
-                                f"**1 correspondance à {x['transfer_station_name']}** · "
-                                f"🚉 {dep_name} → "
-                                f"{fmt_time(x['transfer_arr_min'])} / "
-                                f"{fmt_time(x['transfer_dep_min'])} "
-                                f"({fmt_duration(x['change_duration'])})"
+                    def render_journeys(frame, destination):
+                        lines = []
+                        for _, x in frame.iterrows():
+                            lines.append(
+                                f"- **{fmt_time(x['dep_min'])} → {fmt_time(x['arr_min'])}** · "
+                                f"{fmt_duration(x['duration'])} · {journey_label(x)}"
                             )
+                            if int(x.get("connections", 0)) > 0:
+                                lines.append(f"  _{journey_route(x, destination)}_")
+                        st.markdown("\n".join(lines))
 
-                        out_lines.append(line)
+                    # 4 horaires visibles, puis un menu pour les autres.
+                    visible_out = out.head(4)
+                    visible_ret = ret.head(4)
+                    destination_label = str(r["station_name"]).title()
 
-                    st.markdown("\n".join(out_lines))
+                    st.markdown("🚆 **Allers disponibles**")
+                    render_journeys(visible_out, destination_label)
+                    if len(out) > len(visible_out):
+                        with st.expander(
+                            f"Autres horaires disponibles ({len(out) - len(visible_out)})"
+                        ):
+                            render_journeys(out.iloc[len(visible_out):], destination_label)
 
-                    st.markdown(
-                        "↩️ **Retours disponibles**"
-                    )
-
-                    ret_lines = []
-
-                    for _, x in ret.iterrows():
-
-                        if x["journey_type"] == "direct":
-
-                            try:
-                                dep_name = station_lookup.loc[
-                                    x["origin_station_id"], "station_name"
-                                ]
-                            except Exception:
-                                dep_name = x["origin_station_id"]
-
-                            line = (
-                                f"- **{fmt_time(x['dep_min'])} → "
-                                f"{fmt_time(x['arr_min'])}** · "
-                                f"{fmt_duration(x['duration'])} · direct · "
-                                f"🚉 {dep_name}"
-                            )
-
-                        else:
-
-                            try:
-                                dep_name = station_lookup.loc[
-                                    x["origin_station_id"], "station_name"
-                                ]
-                            except Exception:
-                                dep_name = x["origin_station_id"]
-
-                            line = (
-                                f"- **{fmt_time(x['dep_min'])} → "
-                                f"{fmt_time(x['arr_min'])}** · "
-                                f"{fmt_duration(x['duration'])} · "
-                                f"**1 correspondance à {x['transfer_station_name']}** · "
-                                f"🚉 {dep_name} → "
-                                f"{fmt_time(x['transfer_arr_min'])} / "
-                                f"{fmt_time(x['transfer_dep_min'])} "
-                                f"({fmt_duration(x['change_duration'])})"
-                            )
-
-                        ret_lines.append(line)
-
-                    st.markdown("\n".join(ret_lines))
+                    st.markdown("↩️ **Retours disponibles**")
+                    render_journeys(visible_ret, destination_label)
+                    if len(ret) > len(visible_ret):
+                        with st.expander(
+                            f"Autres horaires disponibles ({len(ret) - len(visible_ret)})"
+                        ):
+                            render_journeys(ret.iloc[len(visible_ret):], destination_label)
 
                     st.caption(
-                        "Les horaires aller et retour restent volontairement "
-                        "indépendants : à toi de choisir la combinaison qui te convient."
+                        "Les horaires aller et retour sont volontairement "
+                        "présentés séparément : à toi de choisir la combinaison "
+                        "qui te convient."
                     )
 
                 with c2:
@@ -1227,6 +1050,6 @@ else:
         **Exemple :** choisis Paris, un week-end et un budget de 100 €.
 
         En Train Alain cherche les destinations réellement desservies,
-        puis affiche les horaires disponibles à l'aller et au retour.
+        puis affiche séparément les horaires disponibles à l'aller et au retour.
         """
     )
