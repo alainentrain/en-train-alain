@@ -1,18 +1,17 @@
-# En Train Alain — V12
+# En Train Alain — V13
 
-Base officielle : V10, avec la logique de correspondances de V11 conservée puis corrigée.
+Prototype de découverte de destinations en train depuis Paris.
 
-## V12
-- Les trajets directs sont toujours prioritaires.
-- Une correspondance n'est proposée que lorsqu'aucun trajet direct n'existe vers la destination.
-- Les faux détours du type Paris → Longueau → Amiens alors qu'un direct existe sont éliminés.
-- Les correspondances affichent désormais clairement la gare de correspondance et le parcours.
-- Les points d'arrêt routiers/cars sont exclus du MVP ferroviaire, notamment « Paris-Austerlitz Routiere ».
-- Les 4 premiers horaires sont visibles et les suivants sont accessibles via « Autres horaires disponibles ».
-- Allers et retours restent indépendants : aucune combinaison A/R n'est imposée.
+## V13
+- horaires SNCF réels issus du GTFS
+- destinations présentées sous forme de cartes
+- allers et retours affichés séparément
+- suppression du doublon « Allers disponibles »
+- correspondances d'un trajet seulement lorsque nécessaire
+- tarifs indicatifs lorsqu'une référence est disponible
 
 ## Données
-Conserver dans `data/` les 5 fichiers SNCF déjà utilisés :
+Conserver dans `data/` les fichiers SNCF déjà utilisés par la version précédente :
 - `stations.csv`
 - `routes.csv`
 - `calendar_dates.csv`

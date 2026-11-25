@@ -521,7 +521,7 @@ if not fares.empty:
 
 st.title("🚆 En Train Alain")
 st.caption(
-    "Tu as un budget, on cherche où partir. — V12 : allers, retours et correspondances mieux interprétées"
+    "Tu as un budget, on cherche où partir. — V13 : destinations + horaires aller/retour séparés"
 )
 
 with st.sidebar:
@@ -812,7 +812,7 @@ if search:
 
         if not common_destinations:
             st.warning(
-                "Aucune destination avec un aller et un retour direct ne correspond "
+                "Aucune destination avec un aller et un retour exploitable ne correspond "
                 "à ces critères."
             )
             st.caption(
@@ -970,12 +970,11 @@ if search:
                     )
 
                     st.caption(
+                        f"Escapade à {str(r['station_name']).title()} · "
                         f"{fare_text} · "
                         f"distance ≈ {r['distance_km']:.0f} km · "
                         f"score {r['score']:.0f}/100"
                     )
-
-                    st.markdown("🚆 **Allers disponibles**")
 
                     def journey_label(x):
                         conn = int(x.get("connections", 0))
@@ -1011,10 +1010,19 @@ if search:
                                 lines.append(f"  _{journey_route(x, destination)}_")
                         st.markdown("\n".join(lines))
 
-                    # 4 horaires visibles, puis un menu pour les autres.
+                    # Une destination = une carte, avec ses horaires indépendants.
+                    # On donne juste un résumé de l'escapade avant les horaires.
                     visible_out = out.head(4)
                     visible_ret = ret.head(4)
                     destination_label = str(r["station_name"]).title()
+
+                    direct_out = int((out["connections"] == 0).sum()) if "connections" in out.columns else len(out)
+                    direct_ret = int((ret["connections"] == 0).sum()) if "connections" in ret.columns else len(ret)
+
+                    st.caption(
+                        f"{len(out)} aller(s) · {len(ret)} retour(s) · "
+                        f"{direct_out} direct(s) à l'aller · {direct_ret} direct(s) au retour"
+                    )
 
                     st.markdown("🚆 **Allers disponibles**")
                     render_journeys(visible_out, destination_label)
