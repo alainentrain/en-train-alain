@@ -1,7 +1,19 @@
-# En Train Alain — V11
+# En Train Alain — V11.1
 
-Base de travail : V10 validée.
+Prototype Streamlit basé sur V10.
 
-V11 conserve l'affichage libre des allers et des retours et ajoute une recherche de trajets avec une correspondance lorsque les trajets directs ne suffisent pas.
+## V11.1
+- Horaires SNCF réels via GTFS.
+- Allers et retours affichés séparément.
+- Trajets directs conservés.
+- Ajout de trajets à 1 correspondance.
+- Directs et correspondances sont mélangés dans le classement des destinations.
+- Budget et durée restent des critères de scoring indicatifs.
+- Les prix restent des tarifs de référence, pas des prix temps réel.
 
-Les fichiers SNCF du dossier `data/` ne sont pas inclus : conserver le dossier `data/` existant du dépôt.
+## Données
+Conserver le dossier `data/` déjà présent dans le projet avec les 5 fichiers :
+`calendar_dates.csv`, `routes.csv`, `stations.csv`, `tarifs-tgv-inoui-ouigo.csv`, `trip_stops.csv.gz`.
+
+## Déploiement
+Remplacer uniquement `app.py` et `README.md`. Conserver `requirements.txt` et le dossier `data/` existants.
