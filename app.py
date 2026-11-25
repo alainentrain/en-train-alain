@@ -381,6 +381,12 @@ def one_connection_journeys(
 
     results = []
 
+    # Index mémoire des arrêts par train : évite de rescanner tout le GTFS
+    # pour chaque candidat de correspondance.
+    trip_stop_groups = {
+        str(tid): g for tid, g in rail.groupby("trip_id", sort=False)
+    }
+
     for _, leg1 in first_stops.iterrows():
         transfer_station = leg1["station_id"]
         arrival1 = float(leg1["arr_min"])
@@ -405,9 +411,10 @@ def one_connection_journeys(
                 continue
 
             # La destination doit être après le départ de la correspondance.
-            trip2 = rail[rail["trip_id"] == leg2["trip_id"]]
-            if trip2.empty:
+            trip2 = trip_stop_groups.get(str(leg2["trip_id"]))
+            if trip2 is None or trip2.empty:
                 continue
+            trip2 = trip2.copy()
 
             trip2 = trip2[
                 trip2["stop_sequence"] > float(leg2["stop_sequence"])
@@ -474,22 +481,31 @@ def one_connection_journeys(
 # Couche DESTINATION
 # ------------------------------------------------------------
 
-# Une gare SNCF n'est pas forcément une destination utilisateur.
-# Certaines gares sont surtout des arrêts intermédiaires / points d'accès
-# à une destination voisine. On conserve toujours la gare réelle pour
-# calculer le trajet, mais on affiche la destination éditoriale.
+# Cette couche est volontairement séparée des données transport.
+# Les fournisseurs nous donnent des gares / arrêts ; En Train Alain
+# décide quelles gares appartiennent à une même destination éditoriale.
 #
-# IMPORTANT : les noms de gares comme Lille Flandres, Bordeaux Saint-Jean,
-# Épernay ou Épernon restent des destinations à part entière.
-DESTINATION_ALIASES = {
-    # Amiens
-    "LONGUEAU": "Amiens",
-}
+# Le fichier destination_map.csv est notre couche métier : on peut donc
+# la conserver quand la source des trajets passera du GTFS à une API.
+@st.cache_data
+def load_destination_map():
+    p = DATA / "destination_map.csv"
+    if not p.exists():
+        return pd.DataFrame(columns=[
+            "station_id", "station_name", "destination_name", "destination_type"
+        ])
+    return pd.read_csv(p, dtype=str)
 
-def destination_name_for_station(station_name):
-    """Retourne le nom de destination affiché pour une gare."""
-    key = norm(station_name)
-    return DESTINATION_ALIASES.get(key, str(station_name))
+
+def destination_name_for_station(station_name, destination_map=None):
+    """Retourne le nom de destination éditoriale pour une gare."""
+    if destination_map is not None and not destination_map.empty:
+        hit = destination_map[
+            destination_map["station_name"].map(norm) == norm(station_name)
+        ]
+        if not hit.empty:
+            return str(hit.iloc[0]["destination_name"])
+    return str(station_name)
 
 # ------------------------------------------------------------
 # Tarifs indicatifs
@@ -527,6 +543,7 @@ def fare_lookup(fares, origin_name, dest_name):
 # ------------------------------------------------------------
 
 stations, routes, cal, trips = load_data()
+destination_map = load_destination_map()
 stations_geo = add_distance_from_paris(stations)
 station_lookup = stations_geo.set_index("station_id")
 
@@ -543,7 +560,7 @@ if not fares.empty:
 
 st.title("🚆 En Train Alain")
 st.caption(
-    "Tu as un budget, on cherche où partir. — V14 : destinations et correspondances mieux interprétées"
+    "Tu as un budget, on cherche où partir. — V14.2 : couche destination séparée des données transport"
 )
 
 with st.sidebar:
@@ -853,13 +870,13 @@ if search:
         # Exemple : LONGUEAU -> Amiens. On fusionne alors les horaires de
         # toutes les gares appartenant à la même destination.
         outbound_all["_destination_name"] = outbound_all["station_name"].map(
-            destination_name_for_station
+            lambda x: destination_name_for_station(x, destination_map)
         )
         return_station_names = return_all["origin_station_id"].map(
             station_lookup["station_name"]
         )
         return_all["_destination_name"] = return_station_names.map(
-            destination_name_for_station
+            lambda x: destination_name_for_station(x, destination_map)
         )
 
         common_destination_names = (
@@ -892,11 +909,21 @@ if search:
             station_id = best_out["station_id"]
             station_name = str(best_out["station_name"])
 
+            # On cherche d'abord le tarif de la destination éditoriale,
+            # puis celui de la gare réelle. Cela permet à une gare secondaire
+            # (ex. Longueau) de profiter du tarif de sa destination (Amiens)
+            # lorsqu'il existe dans les données de référence.
             fare_min = fare_lookup(
                 fares,
                 "PARIS" if origin == "Paris (toutes les gares)" else origin,
-                station_name,
+                str(destination_name),
             )
+            if pd.isna(fare_min) and norm(str(destination_name)) != norm(station_name):
+                fare_min = fare_lookup(
+                    fares,
+                    "PARIS" if origin == "Paris (toutes les gares)" else origin,
+                    station_name,
+                )
 
             fare_ar = (
                 fare_min * 2
@@ -974,6 +1001,12 @@ if search:
             f"Services actifs : {len(out_services)} à l'aller · "
             f"{len(in_services)} au retour · "
             f"{len(results)} destinations affichées"
+        )
+
+        st.caption(
+            "Les gares sont regroupées selon la couche éditoriale En Train Alain : "
+            "une gare peut donc être un arrêt secondaire d'une destination sans devenir "
+            "une destination distincte."
         )
 
         # ====================================================
