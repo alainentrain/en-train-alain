@@ -109,23 +109,6 @@ def fmt_time(value):
         return "—"
 
 
-def ensure_station_columns(df):
-    """Garantit les colonnes de gare attendues, y compris pour les résultats de correspondance."""
-    out = df.copy()
-    if "station_name" not in out.columns:
-        if "arrival_station_name" in out.columns:
-            out["station_name"] = out["arrival_station_name"]
-        else:
-            out["station_name"] = out.get("station_id", pd.Series(index=out.index, dtype=str)).astype(str)
-    if "station_id" not in out.columns and "destination_station_id" in out.columns:
-        out["station_id"] = out["destination_station_id"]
-    if "destination_station_name" not in out.columns:
-        out["destination_station_name"] = out["station_name"]
-    if "destination_station_id" not in out.columns:
-        out["destination_station_id"] = out["station_id"]
-    return out
-
-
 def active_services(cal, d):
     ds = d.strftime("%Y%m%d")
     x = cal[cal["date"] == ds]
@@ -215,129 +198,6 @@ def rail_rows(trips, services):
 # Recherche de trajets DIRECTS
 # ------------------------------------------------------------
 
-def _significant_tokens(name):
-    stop = {
-        "GARE", "DE", "DU", "DES", "LA", "LE", "LES", "EN",
-        "SAINT", "STE", "ST", "CENTRE", "VILLE"
-    }
-    return {
-        tok for tok in norm(name).split()
-        if len(tok) >= 4 and tok not in stop
-    }
-
-
-def collapse_intermediate_destinations(rows, rail, stations,
-                                       radius_km=15,
-                                       prominence_ratio=1.5):
-    """
-    Transforme certains arrêts intermédiaires en une destination
-    ferroviaire plus pertinente.
-
-    Exemple :
-        Longueau -> Amiens
-    si Amiens est nettement plus fréquent dans le réseau et à proximité.
-
-    On protège les gares qui partagent un nom de ville évident
-    (Lille Flandres / Lille Europe, Lyon Perrache / Lyon Part-Dieu, etc.)
-    afin de ne pas les fusionner artificiellement.
-    """
-    if rows.empty or stations is None or stations.empty:
-        return rows
-
-    geo = stations[["station_id", "station_name", "lat", "lon"]].copy()
-    geo["station_id"] = geo["station_id"].astype(str)
-    geo = geo.drop_duplicates("station_id")
-
-    prominence = (
-        rail.groupby("station_id")["trip_id"]
-        .nunique()
-        .to_dict()
-    )
-
-    coords = geo.set_index("station_id")[["lat", "lon", "station_name"]].to_dict("index")
-
-    out = rows.copy()
-    destination_ids = {}
-    destination_names = {}
-
-    # On traite chaque train séparément : seules les gares situées
-    # après l'arrêt considéré peuvent devenir sa destination de remplacement.
-    for trip_id, g in out.groupby("trip_id", sort=False):
-        # Dans les résultats, un même trip peut apparaître pour plusieurs
-        # arrêts successifs.
-        g = g.sort_values("stop_sequence")
-        idxs = list(g.index)
-
-        for pos, idx in enumerate(idxs):
-            current = g.loc[idx]
-            current_id = str(current["station_id"])
-            current_name = str(current["station_name"])
-
-            best_id = current_id
-            best_name = current_name
-            current_prom = float(prominence.get(current_id, 0))
-
-            current_tokens = _significant_tokens(current_name)
-
-            c = coords.get(current_id)
-            if c is not None:
-                for jdx in idxs[pos + 1:]:
-                    candidate = g.loc[jdx]
-                    cand_id = str(candidate["station_id"])
-                    cand_name = str(candidate["station_name"])
-
-                    cc = coords.get(cand_id)
-                    if cc is None:
-                        continue
-
-                    try:
-                        d = haversine_km(
-                            c["lat"], c["lon"],
-                            cc["lat"], cc["lon"],
-                        )
-                    except Exception:
-                        continue
-
-                    if d > radius_km:
-                        # Les stops étant dans l'ordre géographique du trajet
-                        # dans la grande majorité des cas, on ne casse pas
-                        # complètement la recherche si un stop plus loin revient
-                        # proche plus tard.
-                        continue
-
-                    cand_prom = float(prominence.get(cand_id, 0))
-
-                    if cand_prom < max(
-                        current_prom * prominence_ratio,
-                        current_prom + 10,
-                    ):
-                        continue
-
-                    # Si les deux noms décrivent manifestement la même ville
-                    # ou le même pôle, on garde les gares séparées.
-                    cand_tokens = _significant_tokens(cand_name)
-                    if current_tokens and cand_tokens and (
-                        current_tokens & cand_tokens
-                    ):
-                        continue
-
-                    if cand_prom > float(prominence.get(best_id, 0)):
-                        best_id = cand_id
-                        best_name = cand_name
-
-            destination_ids[idx] = best_id
-            destination_names[idx] = best_name
-
-    out["destination_station_id"] = pd.Series(
-        destination_ids, index=out.index
-    )
-    out["destination_station_name"] = pd.Series(
-        destination_names, index=out.index
-    )
-    return out
-
-
-
 def direct_journeys(
     trips,
     services,
@@ -346,7 +206,6 @@ def direct_journeys(
     dep_start=300,
     dep_end=1380,
     max_duration=600,
-    stations=None,
 ):
     rail = rail_rows(trips, services)
 
@@ -420,26 +279,6 @@ def direct_journeys(
         .drop_duplicates(["trip_id", "station_id"])
     )
 
-    # --------------------------------------------------------
-    # Destination réelle / arrêt intermédiaire
-    # --------------------------------------------------------
-    # Le GTFS contient tous les arrêts successifs d'un train.
-    # On ne veut pas afficher chaque arrêt comme une destination.
-    # On cherche donc, parmi les arrêts suivants, une destination
-    # nettement plus structurante et proche.
-    #
-    # Exemple :
-    # Paris -> Longueau -> Amiens
-    # => Amiens devient la destination proposée.
-    #
-    # En revanche, Lille Flandres / Lille Europe ou Lyon Perrache /
-    # Lyon Part-Dieu restent séparés.
-    downstream = collapse_intermediate_destinations(
-        downstream,
-        rail,
-        stations,
-    )
-
     result = downstream[
         [
             "trip_id",
@@ -452,11 +291,8 @@ def direct_journeys(
             "origin_station_id",
             "trip_headsign",
             "duration",
-            "destination_station_id",
-            "destination_station_name",
         ]
     ].rename(columns={"origin_departure_time": "departure_time"})
-    result = ensure_station_columns(result)
     result["connections"] = 0
     return result
 
@@ -588,31 +424,6 @@ def one_connection_journeys(
             if trip2.empty:
                 continue
 
-            # Même logique que pour les directs : on cherche en priorité
-            # l'arrêt correspondant au headsign du second train, afin de
-            # ne pas transformer un arrêt intermédiaire en destination.
-            trip2["_headsign_norm"] = trip2["trip_headsign"].map(norm)
-            trip2["_station_norm"] = trip2["station_name"].map(norm)
-
-            matched = trip2[
-                trip2["_station_norm"] == trip2["_headsign_norm"]
-            ].copy()
-
-            if not matched.empty:
-                trip2 = matched
-            else:
-                trip2 = (
-                    trip2
-                    .sort_values("stop_sequence")
-                    .groupby("trip_id", as_index=False)
-                    .tail(1)
-                )
-
-            trip2 = trip2.drop(
-                columns=["_headsign_norm", "_station_norm"],
-                errors="ignore",
-            )
-
             trip2["total_duration"] = (
                 trip2["arr_min"] - first_departure
             )
@@ -651,13 +462,34 @@ def one_connection_journeys(
     out = pd.DataFrame(results)
 
     # Élimination des doublons d'affichage.
-    out = ensure_station_columns(out)
     return (
         out
         .sort_values(["station_id", "dep_min", "arr_min"])
         .drop_duplicates(["station_id", "dep_min", "arr_min"])
     )
 
+
+
+# ------------------------------------------------------------
+# Couche DESTINATION
+# ------------------------------------------------------------
+
+# Une gare SNCF n'est pas forcément une destination utilisateur.
+# Certaines gares sont surtout des arrêts intermédiaires / points d'accès
+# à une destination voisine. On conserve toujours la gare réelle pour
+# calculer le trajet, mais on affiche la destination éditoriale.
+#
+# IMPORTANT : les noms de gares comme Lille Flandres, Bordeaux Saint-Jean,
+# Épernay ou Épernon restent des destinations à part entière.
+DESTINATION_ALIASES = {
+    # Amiens
+    "LONGUEAU": "Amiens",
+}
+
+def destination_name_for_station(station_name):
+    """Retourne le nom de destination affiché pour une gare."""
+    key = norm(station_name)
+    return DESTINATION_ALIASES.get(key, str(station_name))
 
 # ------------------------------------------------------------
 # Tarifs indicatifs
@@ -711,7 +543,7 @@ if not fares.empty:
 
 st.title("🚆 En Train Alain")
 st.caption(
-    "Tu as un budget, on cherche où partir. — V14 : destinations dédupliquées à partir du trajet réel"
+    "Tu as un budget, on cherche où partir. — V14 : destinations et correspondances mieux interprétées"
 )
 
 with st.sidebar:
@@ -792,7 +624,7 @@ with st.sidebar:
 st.markdown("### Où peux-tu partir ?")
 
 st.info(
-    "Cette version utilise les horaires SNCF réels et identifie la destination à partir du trajet réel du train, plutôt que de considérer chaque arrêt intermédiaire comme une destination. "
+    "Cette version utilise les horaires SNCF réels et ne propose une correspondance que lorsqu'aucun trajet direct n'existe pour la destination. "
     "Les prix affichés quand disponibles sont des **tarifs indicatifs de référence**, "
     "pas le prix en temps réel. "
     "**Les allers et les retours sont affichés séparément : "
@@ -856,7 +688,6 @@ if search:
             dep_start=dep_start,
             dep_end=dep_end,
             max_duration=max_duration,
-            stations=stations,
         )
 
         if outbound_direct.empty or outbound_direct["station_id"].nunique() < 30:
@@ -885,40 +716,6 @@ if search:
             ignore_index=True,
         ) if not outbound_connections.empty else outbound_direct
 
-        # ----------------------------------------------------
-        # Couche DESTINATION
-        # ----------------------------------------------------
-        # On conserve la gare réelle dans station_name/station_id,
-        # mais on crée une destination utilisateur indépendante.
-        # Pour un trajet direct, le headsign est la meilleure information
-        # disponible dans le GTFS pour savoir où le train va réellement.
-        outbound_all["destination_name"] = outbound_all[
-            "destination_station_name"
-        ].fillna(
-            outbound_all["station_name"]
-        ).astype(str).str.strip()
-
-        outbound_all["destination_key"] = outbound_all[
-            "destination_station_id"
-        ].fillna(
-            outbound_all["station_id"]
-        ).astype(str)
-
-        # Pour un trajet direct, une seule gare doit représenter
-        # la destination : la gare retenue par le moteur de destination.
-        # Cela évite par exemple d'afficher Longueau ET Amiens pour
-        # le même train Paris -> Amiens.
-        direct_mask = outbound_all["connections"].fillna(0).astype(int) == 0
-        outbound_all = outbound_all[
-            (~direct_mask)
-            | (
-                outbound_all["station_id"].astype(str)
-                == outbound_all["destination_station_id"].astype(str)
-            )
-        ].copy()
-
-        outbound_all = ensure_station_columns(outbound_all)
-
         # ====================================================
         # 2. RETOURS DISPONIBLES
         # ====================================================
@@ -940,7 +737,6 @@ if search:
                 dep_start=600,
                 dep_end=1500,
                 max_duration=max_duration,
-                stations=stations,
             )
 
             if return_direct.empty or return_direct["origin_station_id"].nunique() < 30:
@@ -971,29 +767,6 @@ if search:
                 )
             else:
                 return_all = return_direct
-
-            return_all = ensure_station_columns(return_all)
-
-            # Les retours partent de la gare réellement utilisée à
-            # l'aller. On les rattache à la destination utilisateur
-            # déterminée côté aller.
-            station_destination_map = (
-                outbound_all[
-                    ["station_id", "destination_key", "destination_name"]
-                ]
-                .dropna(subset=["station_id", "destination_key"])
-                .sort_values(["station_id", "destination_key"])
-                .drop_duplicates("station_id")
-                .set_index("station_id")
-            )
-
-            if not return_all.empty:
-                return_all["destination_key"] = return_all[
-                    "origin_station_id"
-                ].map(station_destination_map["destination_key"])
-                return_all["destination_name"] = return_all[
-                    "origin_station_id"
-                ].map(station_destination_map["destination_name"])
 
         # ====================================================
         # 3. NETTOYAGE DES POINTS ROUTIERS + PROXIMITÉ
@@ -1040,11 +813,11 @@ if search:
         # On ne garde que les destinations pour lesquelles
         # un aller ET au moins un retour existent.
         outbound_destinations = set(
-            outbound_all["destination_key"].dropna()
+            outbound_all["station_id"]
         ) if not outbound_all.empty else set()
 
         return_destinations = set(
-            return_all["destination_key"].dropna()
+            return_all["origin_station_id"]
         ) if not return_all.empty else set()
 
         common_destinations = (
@@ -1052,11 +825,11 @@ if search:
         )
 
         outbound_all = outbound_all[
-            outbound_all["destination_key"].isin(common_destinations)
+            outbound_all["station_id"].isin(common_destinations)
         ].copy()
 
         return_all = return_all[
-            return_all["destination_key"].isin(common_destinations)
+            return_all["origin_station_id"].isin(common_destinations)
         ].copy()
 
         if not common_destinations:
@@ -1076,14 +849,32 @@ if search:
 
         destination_rows = []
 
-        for destination_key in common_destinations:
+        # Une destination éditoriale peut regrouper plusieurs gares.
+        # Exemple : LONGUEAU -> Amiens. On fusionne alors les horaires de
+        # toutes les gares appartenant à la même destination.
+        outbound_all["_destination_name"] = outbound_all["station_name"].map(
+            destination_name_for_station
+        )
+        return_station_names = return_all["origin_station_id"].map(
+            station_lookup["station_name"]
+        )
+        return_all["_destination_name"] = return_station_names.map(
+            destination_name_for_station
+        )
+
+        common_destination_names = (
+            set(outbound_all["_destination_name"])
+            & set(return_all["_destination_name"])
+        )
+
+        for destination_name in common_destination_names:
 
             out = outbound_all[
-                outbound_all["destination_key"] == destination_key
+                outbound_all["_destination_name"] == destination_name
             ].sort_values(["dep_min", "duration"])
 
             ret = return_all[
-                return_all["destination_key"] == destination_key
+                return_all["_destination_name"] == destination_name
             ].sort_values(["dep_min", "duration"])
 
             if out.empty or ret.empty:
@@ -1098,19 +889,13 @@ if search:
                 ["duration", "dep_min"]
             ).iloc[0]
 
-            destination_name = str(
-                best_out["destination_name"]
-            ).strip()
-
-            # Gare ferroviaire réellement utilisée pour l'aller.
-            arrival_station_name = str(
-                best_out.get("station_name", best_out.get("arrival_station_name", destination_name))
-            ).strip()
+            station_id = best_out["station_id"]
+            station_name = str(best_out["station_name"])
 
             fare_min = fare_lookup(
                 fares,
                 "PARIS" if origin == "Paris (toutes les gares)" else origin,
-                destination_name,
+                station_name,
             )
 
             fare_ar = (
@@ -1154,15 +939,15 @@ if search:
 
             destination_rows.append(
                 {
-                    "destination_key": destination_key,
+                    "station_id": station_id,
+                    "station_name": station_name,
                     "destination_name": destination_name,
-                    "arrival_station_name": arrival_station_name,
                     "out": out,
                     "ret": ret,
                     "fare_ar": fare_ar,
                     "score": score,
                     "distance_km": station_lookup.loc[
-                        best_out["station_id"], "_distance_paris_km"
+                        station_id, "_distance_paris_km"
                     ],
                 }
             )
@@ -1230,8 +1015,6 @@ if search:
                         f"score {r['score']:.0f}/100"
                     )
 
-                    st.markdown("🚆 **Allers disponibles**")
-
                     def journey_label(x):
                         conn = int(x.get("connections", 0))
                         if conn == 0:
@@ -1246,15 +1029,10 @@ if search:
                     def journey_route(x, destination):
                         try:
                             origin_name = str(
-                                station_lookup.loc[str(x["origin_station_id"]), "station_name"]
+                                station_lookup.loc[x["origin_station_id"], "station_name"]
                             )
                         except Exception:
-                            try:
-                                origin_name = str(
-                                    station_lookup.loc[x["origin_station_id"], "station_name"]
-                                )
-                            except Exception:
-                                origin_name = str(x.get("origin_station_id", ""))
+                            origin_name = str(x.get("origin_station_id", ""))
                         if int(x.get("connections", 0)) == 0:
                             return f"{origin_name} → {destination}"
                         transfer = str(x.get("transfer_station_name", "")).strip()
@@ -1274,22 +1052,7 @@ if search:
                     # 4 horaires visibles, puis un menu pour les autres.
                     visible_out = out.head(4)
                     visible_ret = ret.head(4)
-                    destination_label = str(
-                        r["destination_name"]
-                    ).title()
-
-                    # Si le train arrive dans une gare secondaire
-                    # mais que le headsign identifie une destination
-                    # plus pertinente, on le signale sans perdre
-                    # l'information ferroviaire.
-                    arrival_station = str(
-                        r["arrival_station_name"]
-                    ).strip()
-
-                    if norm(arrival_station) != norm(destination_label):
-                        st.caption(
-                            f"Destination ferroviaire : {arrival_station}"
-                        )
+                    destination_label = str(r["destination_name"]).title()
 
                     st.markdown("🚆 **Allers disponibles**")
                     render_journeys(visible_out, destination_label)
