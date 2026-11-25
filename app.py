@@ -109,6 +109,23 @@ def fmt_time(value):
         return "—"
 
 
+def ensure_station_columns(df):
+    """Garantit les colonnes de gare attendues, y compris pour les résultats de correspondance."""
+    out = df.copy()
+    if "station_name" not in out.columns:
+        if "arrival_station_name" in out.columns:
+            out["station_name"] = out["arrival_station_name"]
+        else:
+            out["station_name"] = out.get("station_id", pd.Series(index=out.index, dtype=str)).astype(str)
+    if "station_id" not in out.columns and "destination_station_id" in out.columns:
+        out["station_id"] = out["destination_station_id"]
+    if "destination_station_name" not in out.columns:
+        out["destination_station_name"] = out["station_name"]
+    if "destination_station_id" not in out.columns:
+        out["destination_station_id"] = out["station_id"]
+    return out
+
+
 def active_services(cal, d):
     ds = d.strftime("%Y%m%d")
     x = cal[cal["date"] == ds]
@@ -439,6 +456,7 @@ def direct_journeys(
             "destination_station_name",
         ]
     ].rename(columns={"origin_departure_time": "departure_time"})
+    result = ensure_station_columns(result)
     result["connections"] = 0
     return result
 
@@ -633,6 +651,7 @@ def one_connection_journeys(
     out = pd.DataFrame(results)
 
     # Élimination des doublons d'affichage.
+    out = ensure_station_columns(out)
     return (
         out
         .sort_values(["station_id", "dep_min", "arr_min"])
@@ -692,7 +711,7 @@ if not fares.empty:
 
 st.title("🚆 En Train Alain")
 st.caption(
-    "Tu as un budget, on cherche où partir. — V12.1 : destinations dédupliquées à partir du trajet réel"
+    "Tu as un budget, on cherche où partir. — V14 : destinations dédupliquées à partir du trajet réel"
 )
 
 with st.sidebar:
@@ -898,6 +917,8 @@ if search:
             )
         ].copy()
 
+        outbound_all = ensure_station_columns(outbound_all)
+
         # ====================================================
         # 2. RETOURS DISPONIBLES
         # ====================================================
@@ -950,6 +971,8 @@ if search:
                 )
             else:
                 return_all = return_direct
+
+            return_all = ensure_station_columns(return_all)
 
             # Les retours partent de la gare réellement utilisée à
             # l'aller. On les rattache à la destination utilisateur
@@ -1081,7 +1104,7 @@ if search:
 
             # Gare ferroviaire réellement utilisée pour l'aller.
             arrival_station_name = str(
-                best_out["station_name"]
+                best_out.get("station_name", best_out.get("arrival_station_name", destination_name))
             ).strip()
 
             fare_min = fare_lookup(
@@ -1198,7 +1221,7 @@ if search:
 
                 with c1:
                     st.subheader(
-                        str(r["station_name"]).title()
+                        str(r["destination_name"]).title()
                     )
 
                     st.caption(
@@ -1223,10 +1246,15 @@ if search:
                     def journey_route(x, destination):
                         try:
                             origin_name = str(
-                                station_lookup.loc[x["origin_station_id"], "station_name"]
+                                station_lookup.loc[str(x["origin_station_id"]), "station_name"]
                             )
                         except Exception:
-                            origin_name = str(x.get("origin_station_id", ""))
+                            try:
+                                origin_name = str(
+                                    station_lookup.loc[x["origin_station_id"], "station_name"]
+                                )
+                            except Exception:
+                                origin_name = str(x.get("origin_station_id", ""))
                         if int(x.get("connections", 0)) == 0:
                             return f"{origin_name} → {destination}"
                         transfer = str(x.get("transfer_station_name", "")).strip()
